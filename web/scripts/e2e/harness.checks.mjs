@@ -22,6 +22,8 @@ import {
   timedOutAction,
   inviteRequests,
   invitePageState,
+  chatRequests,
+  chatPageState,
 } from "./harness.mjs";
 
 test("bytes and closed receivers cannot pass decoded-frame acceptance", () => {
@@ -483,4 +485,106 @@ test("a failed invite step can say what the page showed: dialogs and the link fi
   ]);
   assert.equal(state({ value: "" }, []).field, "empty");
   assert.equal(state({ value: "http://h/invite/ABC" }, []).field, "link");
+});
+
+test("a chat fault's request log keeps the server's and the chat's requests, IDs masked, until it stops", () => {
+  const listeners = new Map();
+  const page = {
+    on: (event, listener) => listeners.set(event, listener),
+    off: (event, listener) => {
+      if (listeners.get(event) === listener) listeners.delete(event);
+    },
+  };
+  let clock = 0;
+  const requests = chatRequests(page, () => clock);
+  const id = "0b6b8e1e-6f0a-4c8e-9d3a-2a6c0f1e9b7d";
+  const request = (method, path) => ({
+    method: () => method,
+    url: () => `http://127.0.0.1:15186/api${path}?limit=50`,
+  });
+  const detail = request("GET", `/servers/${id}`);
+  const create = request("POST", `/servers/${id}/channels`);
+  const send = request("POST", `/channels/${id}/messages`);
+  const upload = request("PUT", `/attachments/${id}/upload`);
+  clock = 100;
+  for (const r of [detail, create, send, upload]) listeners.get("request")(r);
+  // Pictures and the session are not the chat's.
+  listeners.get("request")(request("GET", `/attachments/${id}`));
+  listeners.get("request")(request("GET", "/auth/session"));
+  clock = 250;
+  listeners.get("response")({ request: () => create, status: () => 201 });
+  clock = 400;
+  listeners.get("requestfailed")(send);
+  assert.deepEqual(
+    requests
+      .list()
+      .map(({ path, method, status, failed, doneAt }) => [
+        method,
+        path,
+        status,
+        failed,
+        doneAt,
+      ]),
+    [
+      ["GET", "/api/servers/:id", null, false, null],
+      ["POST", "/api/servers/:id/channels", 201, false, 250],
+      ["POST", "/api/channels/:id/messages", null, true, 400],
+      ["PUT", "/api/attachments/:id/upload", null, false, null],
+    ],
+  );
+  requests.stop();
+  assert.equal(listeners.size, 0);
+});
+
+test("a chat fault can say what the page showed: pending channels and each message's state", () => {
+  const element = (tagName, text, { classes = [], children = {} } = {}) => ({
+    tagName,
+    textContent: text,
+    classList: { contains: (name) => classes.includes(name) },
+    querySelector: (selector) => children[selector] ?? null,
+    querySelectorAll: (selector) => children[selector] ?? [],
+  });
+  const button = (text) => element("BUTTON", text);
+  const message = (text, classes, buttons = []) =>
+    element("DIV", text, {
+      classes,
+      children: {
+        ".lr-message-text": element("SPAN", text),
+        button: buttons.map(button),
+      },
+    });
+  const nodes = {
+    'dialog[open],[role="dialog"],[role="alertdialog"]': [
+      element("DIALOG", " Kanal  erstellen "),
+    ],
+    ".channel-sidebar .channel-row-link": [
+      element("A", "e2e-voice-a"),
+      element("SPAN", "e2e-parallel-attempts"),
+    ],
+    ".lr-message-row": [
+      message("E2E sent", []),
+      message("E2E on its way", ["is-sending"]),
+      message("E2E turned down", ["is-failed"], ["Verwerfen", "Erneut senden"]),
+    ],
+  };
+  const state = runInContext(
+    `(${chatPageState.toString()})()`,
+    createContext({
+      location: { pathname: "/s/0b6b8e1e-6f0a-4c8e-9d3a-2a6c0f1e9b7d/c/x" },
+      document: { querySelectorAll: (selector) => nodes[selector] ?? [] },
+    }),
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    path: "/s/:id/c/x",
+    dialogs: ["Kanal erstellen"],
+    channels: [
+      { name: "e2e-voice-a", link: true },
+      { name: "e2e-parallel-attempts", link: false },
+    ],
+    messages: [
+      { text: "E2E sent", sending: false, failed: false, retry: false },
+      { text: "E2E on its way", sending: true, failed: false, retry: false },
+      { text: "E2E turned down", sending: false, failed: true, retry: true },
+    ],
+  });
 });

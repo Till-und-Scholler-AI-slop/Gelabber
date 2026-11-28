@@ -2,6 +2,8 @@
 import { readFile } from "node:fs/promises";
 import {
   api,
+  chatPageState,
+  chatRequests,
   check,
   click,
   confirmDialog,
@@ -11,7 +13,7 @@ import {
   snapshot,
   until,
 } from "./harness.mjs";
-import { nativeEvaluate } from "./native-evaluate.mjs";
+import { deadlineProbe, nativeEvaluate } from "./native-evaluate.mjs";
 
 function latch() {
   let release;
@@ -39,12 +41,45 @@ async function present(a, text) {
     .filter({ hasText: new RegExp(`^${escaped}(?:\\s*\\(bearbeitet\\))?$`) })
     .waitFor();
 }
-async function fresh(f, name) {
-  await navigate(f.owner, f.textPath, f.base);
+async function fresh(h, f, name) {
+  await h.step("fresh-text-channel", () =>
+    navigate(f.owner, f.textPath, f.base),
+  );
   const path = await f.channel(name, "Text");
   const id = path.split("/").at(-1);
-  for (const a of [f.owner, f.member]) await navigate(a, path, f.base);
+  await h.step("fresh-open", async () => {
+    for (const a of [f.owner, f.member]) await navigate(a, path, f.base);
+  });
   return { path, id, endpoint: `**/api/channels/${id}/messages*` };
+}
+// A failed chat fault scenario says what the two pages sent from its start
+// and what they show at the end (GEL-443): whether a message was never
+// sent, not answered, answered and not drawn, or drawn late.
+async function withEvidence(f, task) {
+  const logs = {
+    owner: chatRequests(f.owner.page),
+    member: chatRequests(f.member.page),
+  };
+  try {
+    return await task();
+  } catch (error) {
+    if (error && typeof error === "object") {
+      const pages = {};
+      for (const who of ["owner", "member"])
+        pages[who] = await deadlineProbe(
+          () => f[who].page.evaluate(chatPageState),
+          Date.now() + 2_000,
+        ).catch(() => null);
+      error.evidence = {
+        requests: { owner: logs.owner.list(), member: logs.member.list() },
+        pages,
+      };
+    }
+    throw error;
+  } finally {
+    logs.owner.stop();
+    logs.member.stop();
+  }
 }
 async function messages(a, id) {
   const r = await api(a, `/channels/${id}/messages`);
@@ -59,9 +94,15 @@ async function seed(a, id, content) {
   return r.body;
 }
 
-export async function chatFaultScenarios(h, f) {
+export async function chatFaultScenarios(harness, f) {
+  // Each scenario with its steps and, when it fails, its evidence.
+  const h = {
+    ...harness,
+    run: (id, predecessors, task) =>
+      harness.run(id, predecessors, () => withEvidence(f, task)),
+  };
   await h.run("two-parallel-sends-navigation-retry", ["07", "10"], async () => {
-    const c = await fresh(f, "E2E parallel attempts");
+    const c = await fresh(h, f, "E2E parallel attempts");
     const hold = latch();
     let posts = 0,
       held = false,
@@ -94,33 +135,41 @@ export async function chatFaultScenarios(h, f) {
       await route.continue();
     });
     try {
-      await f.owner.page.locator('input[type="file"]').first().setInputFiles({
-        name: "parallel.png",
-        mimeType: "image/png",
-        buffer: bytes,
+      await h.step("attach", async () => {
+        await f.owner.page.locator('input[type="file"]').first().setInputFiles({
+          name: "parallel.png",
+          mimeType: "image/png",
+          buffer: bytes,
+        });
+        check(
+          await f.owner.page
+            .locator("form textarea")
+            .last()
+            .evaluate((el) => el === el.ownerDocument.activeElement),
+          "attachment-picker-did-not-focus-composer",
+        );
       });
-      check(
-        await f.owner.page
-          .locator("form textarea")
-          .last()
-          .evaluate((el) => el === el.ownerDocument.activeElement),
-        "attachment-picker-did-not-focus-composer",
+      await h.step("send-held", () => send(f.owner, text));
+      await h.step("held", () =>
+        until(async () => held, Boolean, "first-send-not-held"),
       );
-      await send(f.owner, text);
-      await until(async () => held, Boolean, "first-send-not-held");
-      await send(f.owner, success);
-      await present(f.member, success);
-      await f.owner.page
-        .getByRole("link", { name: "E2E Voice B", exact: true })
-        .click();
+      await h.step("send-second", () => send(f.owner, success));
+      await h.step("member-sees-second", () => present(f.member, success));
+      await h.step("leave-channel", () =>
+        f.owner.page
+          .getByRole("link", { name: "E2E Voice B", exact: true })
+          .click(),
+      );
       hold.release();
-      await f.owner.page
-        .locator(`.channel-sidebar a[href="${c.path}"]`)
-        .click();
+      await h.step("back-to-channel", () =>
+        f.owner.page.locator(`.channel-sidebar a[href="${c.path}"]`).click(),
+      );
       const failed = failedRow(f.owner, text);
-      await failed
-        .getByRole("button", { name: "Erneut senden", exact: true })
-        .waitFor();
+      await h.step("retry-offered", () =>
+        failed
+          .getByRole("button", { name: "Erneut senden", exact: true })
+          .waitFor(),
+      );
       check(
         (await failed
           .getByRole("img", { name: "parallel.png", exact: true })
@@ -137,10 +186,12 @@ export async function chatFaultScenarios(h, f) {
         { posts, routeError },
       );
       await f.owner.page.unroute(c.endpoint);
-      await failed
-        .getByRole("button", { name: "Erneut senden", exact: true })
-        .click();
-      await present(f.member, text);
+      await h.step("retry", () =>
+        failed
+          .getByRole("button", { name: "Erneut senden", exact: true })
+          .click(),
+      );
+      await h.step("member-sees-retried", () => present(f.member, text));
       const after = await messages(f.member, c.id);
       check(
         after.filter((m) => m.content === text).length === 1 &&
@@ -153,7 +204,7 @@ export async function chatFaultScenarios(h, f) {
         name: "parallel.png",
         exact: true,
       });
-      await image.waitFor();
+      await h.step("member-sees-picture", () => image.waitFor());
       // Once the media worker is done the picture shows its thumbnail
       // (`?size=400`, a JPEG even for a PNG); the bytes sent are the
       // original's.
@@ -184,7 +235,7 @@ export async function chatFaultScenarios(h, f) {
     "committed-send-gateway-timeout-no-duplicate-retry",
     ["07"],
     async () => {
-      const c = await fresh(f, "E2E ambiguous send");
+      const c = await fresh(h, f, "E2E ambiguous send");
       let posts = 0,
         committed = false;
       const text = "E2E persisted behind proxy504";
@@ -261,11 +312,14 @@ export async function chatFaultScenarios(h, f) {
     async () => {
       const controls = [];
       for (const method of ["PATCH", "DELETE"]) {
-        const c = await fresh(f, `E2E ${method} rollback`);
+        const c = await fresh(h, f, `E2E ${method} rollback`);
         const original = `E2E ${method} original`,
           foreign = `E2E ${method} foreign event`;
-        const saved = await seed(f.owner, c.id, original);
-        await present(f.owner, original);
+        const saved = await h.step(`${method}-seed`, async () => {
+          const saved = await seed(f.owner, c.id, original);
+          await present(f.owner, original);
+          return saved;
+        });
         const held = latch();
         const replied = latch();
         let entered = false;
@@ -288,52 +342,62 @@ export async function chatFaultScenarios(h, f) {
           }
         });
         try {
-          if (method === "PATCH") {
-            // Message actions take pointer events only on a hovered row.
-            await row(f.owner, original).hover();
-            await row(f.owner, original)
-              .getByRole("button", {
-                name: "Nachricht bearbeiten",
-                exact: true,
-              })
-              .click();
-            await log(f.owner).locator("textarea").fill("E2E optimistic edit");
-            await click(f.owner, "Speichern");
-            await present(f.owner, "E2E optimistic edit");
-          } else {
-            await row(f.owner, original).hover();
-            await row(f.owner, original)
-              .getByRole("button", { name: "Weitere Aktionen", exact: true })
-              .click();
-            await f.owner.page
-              .getByRole("menuitem", { name: "Löschen", exact: true })
-              .click();
-            await confirmDialog(f.owner, "Löschen");
-            await log(f.owner)
-              .getByText(original, { exact: true })
-              .waitFor({ state: "hidden" });
-          }
-          await until(async () => entered, Boolean, "mutation-fault-not-held");
-          await seed(f.member, c.id, foreign);
-          await present(f.owner, foreign); // positive native WS control before rollback
+          await h.step(`${method}-act`, async () => {
+            if (method === "PATCH") {
+              // Message actions take pointer events only on a hovered row.
+              await row(f.owner, original).hover();
+              await row(f.owner, original)
+                .getByRole("button", {
+                  name: "Nachricht bearbeiten",
+                  exact: true,
+                })
+                .click();
+              await log(f.owner)
+                .locator("textarea")
+                .fill("E2E optimistic edit");
+              await click(f.owner, "Speichern");
+              await present(f.owner, "E2E optimistic edit");
+            } else {
+              await row(f.owner, original).hover();
+              await row(f.owner, original)
+                .getByRole("button", { name: "Weitere Aktionen", exact: true })
+                .click();
+              await f.owner.page
+                .getByRole("menuitem", { name: "Löschen", exact: true })
+                .click();
+              await confirmDialog(f.owner, "Löschen");
+              await log(f.owner)
+                .getByText(original, { exact: true })
+                .waitFor({ state: "hidden" });
+            }
+          });
+          await h.step(`${method}-held`, () =>
+            until(async () => entered, Boolean, "mutation-fault-not-held"),
+          );
+          await h.step(`${method}-foreign`, async () => {
+            await seed(f.member, c.id, foreign);
+            await present(f.owner, foreign); // positive native WS control before rollback
+          });
           held.release();
-          await replied.promise;
+          await h.step(`${method}-reply`, () => replied.promise);
           check(!routeError, "fixture-mutation-fault-response-not-delivered");
-          if (method === "PATCH") {
-            // A turned-down edit rolls the row back and opens the editor
-            // again with what was typed (MessageRow saveEdit). Keep it,
-            // then cancel to see the restored row.
-            const editor = log(f.owner).locator("textarea");
-            await until(
-              () => editor.inputValue({ timeout: 500 }).catch(() => null),
-              (value) => value === "E2E optimistic edit",
-              "edit-rollback-lost-typed-text",
-            );
-            await log(f.owner)
-              .getByRole("button", { name: "Abbrechen", exact: true })
-              .click();
-          }
-          await present(f.owner, original);
+          await h.step(`${method}-rollback`, async () => {
+            if (method === "PATCH") {
+              // A turned-down edit rolls the row back and opens the editor
+              // again with what was typed (MessageRow saveEdit). Keep it,
+              // then cancel to see the restored row.
+              const editor = log(f.owner).locator("textarea");
+              await until(
+                () => editor.inputValue({ timeout: 500 }).catch(() => null),
+                (value) => value === "E2E optimistic edit",
+                "edit-rollback-lost-typed-text",
+              );
+              await log(f.owner)
+                .getByRole("button", { name: "Abbrechen", exact: true })
+                .click();
+            }
+            await present(f.owner, original);
+          });
           check(
             (await log(f.owner).getByText(foreign, { exact: true }).count()) ===
               1,
@@ -367,7 +431,7 @@ export async function chatFaultScenarios(h, f) {
     "rest-ws-reordering-edit-delete-rollback",
     ["06b", "07"],
     async () => {
-      const c = await fresh(f, "E2E delayed REST");
+      const c = await fresh(h, f, "E2E delayed REST");
       const edited = await seed(f.owner, c.id, "E2E old REST edit");
       const deleted = await seed(f.owner, c.id, "E2E old REST delete");
       const held = latch();
@@ -478,7 +542,7 @@ export async function chatFaultScenarios(h, f) {
   );
 
   await h.run("paging-error-data-preservation", ["07", "06a"], async () => {
-    const c = await fresh(f, "E2E paging failure");
+    const c = await fresh(h, f, "E2E paging failure");
     for (let i = 0; i < 55; i++)
       await seed(f.member, c.id, `E2E page ${String(i).padStart(2, "0")}`);
     // With unread rows the channel opens at the first of them and loads the
@@ -589,7 +653,7 @@ export async function chatFaultScenarios(h, f) {
     "upload-abort-retains-text-file-retry",
     ["07", "10"],
     async () => {
-      const c = await fresh(f, "E2E upload abort");
+      const c = await fresh(h, f, "E2E upload abort");
       const bytes = await readFile(
         new URL("../fixtures/smoke.png", import.meta.url),
       );
@@ -659,7 +723,7 @@ export async function chatFaultScenarios(h, f) {
     "upload-account-switch-no-foreign-bind",
     ["04", "07", "10"],
     async () => {
-      const c = await fresh(f, "E2E upload scope boundary");
+      const c = await fresh(h, f, "E2E upload scope boundary");
       const bytes = await readFile(
         new URL("../fixtures/smoke.png", import.meta.url),
       );

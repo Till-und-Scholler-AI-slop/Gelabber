@@ -162,38 +162,78 @@ export async function api(actor, path, method = "GET", body, nativeBudget) {
     ? actor.page.evaluate(request, args)
     : nativeEvaluate(actor, request, args, nativeBudget);
 }
-// The invite requests a page sends from now on: method, status or failure,
-// and when they were sent and answered, in ms from the start (GEL-423).
-export function inviteRequests(page, now = () => Date.now()) {
+// The requests a page sends from now on that `pick` keeps: method, status
+// or failure, and when they were sent and answered, in ms from the start,
+// with what `pick` adds (an object; null leaves the request out). `stop`
+// ends the recording.
+export function requestLog(page, pick, now = () => Date.now()) {
   const since = now();
   const entries = new Map();
-  const invite = (request) =>
-    /^\/api\/(servers\/[^/]+\/invites|invites\/[^/]+)$/.test(
-      new URL(request.url()).pathname,
-    );
-  page.on("request", (request) => {
-    if (invite(request))
-      entries.set(request, {
-        method: request.method(),
-        sentAt: now() - since,
-        status: null,
-        failed: false,
-        doneAt: null,
-      });
-  });
-  page.on("response", (response) => {
-    const entry = entries.get(response.request());
-    if (!entry) return;
-    entry.status = response.status();
-    entry.doneAt = now() - since;
-  });
-  page.on("requestfailed", (request) => {
-    const entry = entries.get(request);
-    if (!entry) return;
-    entry.failed = true;
-    entry.doneAt = now() - since;
-  });
-  return { list: () => [...entries.values()].map((entry) => ({ ...entry })) };
+  const listeners = {
+    request: (request) => {
+      const extra = pick(request);
+      if (extra)
+        entries.set(request, {
+          ...extra,
+          method: request.method(),
+          sentAt: now() - since,
+          status: null,
+          failed: false,
+          doneAt: null,
+        });
+    },
+    response: (response) => {
+      const entry = entries.get(response.request());
+      if (!entry) return;
+      entry.status = response.status();
+      entry.doneAt = now() - since;
+    },
+    requestfailed: (request) => {
+      const entry = entries.get(request);
+      if (!entry) return;
+      entry.failed = true;
+      entry.doneAt = now() - since;
+    },
+  };
+  for (const [event, listener] of Object.entries(listeners))
+    page.on(event, listener);
+  return {
+    list: () => [...entries.values()].map((entry) => ({ ...entry })),
+    stop: () => {
+      for (const [event, listener] of Object.entries(listeners))
+        page.off?.(event, listener);
+    },
+  };
+}
+// The invite requests a page sends from now on (GEL-423).
+export function inviteRequests(page, now = () => Date.now()) {
+  return requestLog(
+    page,
+    (request) =>
+      /^\/api\/(servers\/[^/]+\/invites|invites\/[^/]+)$/.test(
+        new URL(request.url()).pathname,
+      )
+        ? {}
+        : null,
+    now,
+  );
+}
+// A server's and its chat's requests, by path with IDs masked: the server
+// and its channels, a channel's messages and uploads, one message
+// (GEL-443).
+export function chatRequests(page, now = () => Date.now()) {
+  return requestLog(
+    page,
+    (request) => {
+      const path = new URL(request.url()).pathname;
+      return /^\/api\/(servers\/[^/]+(\/channels)?|channels\/[^/]+\/(messages|attachments)|messages\/[^/]+|attachments\/[^/]+\/upload)$/.test(
+        path,
+      )
+        ? { path: path.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, ":id") }
+        : null;
+    },
+    now,
+  );
 }
 // What the owner's page shows when its invite link does not come: its path
 // (IDs masked), each dialog's name and text, and the link field's state.
@@ -220,6 +260,33 @@ export function invitePageState() {
         : field.value.includes("/invite/")
           ? "link"
           : "other",
+  };
+}
+// What a chat page shows when a chat fault scenario runs out of time
+// (GEL-443): its path (IDs masked), its open dialogs, the channels in the
+// sidebar (a pending one has no link yet) and the message rows, each with
+// its text (shortened) and whether it is sending, failed or offers a retry.
+export function chatPageState() {
+  const text = (element, length) =>
+    (element?.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, length);
+  return {
+    path: location.pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, ":id"),
+    dialogs: [
+      ...document.querySelectorAll(
+        'dialog[open],[role="dialog"],[role="alertdialog"]',
+      ),
+    ].map((dialog) => text(dialog, 80)),
+    channels: [
+      ...document.querySelectorAll(".channel-sidebar .channel-row-link"),
+    ].map((row) => ({ name: text(row, 60), link: row.tagName === "A" })),
+    messages: [...document.querySelectorAll(".lr-message-row")].map((row) => ({
+      text: text(row.querySelector(".lr-message-text"), 80),
+      sending: row.classList.contains("is-sending"),
+      failed: row.classList.contains("is-failed"),
+      retry: [...row.querySelectorAll("button")].some(
+        (button) => button.textContent.trim() === "Erneut senden",
+      ),
+    })),
   };
 }
 export async function startHarness() {
@@ -303,6 +370,11 @@ export async function startHarness() {
   };
   // How long each fixture step took, in the fixture's row (GEL-423).
   const { steps: fixtureSteps, step } = stepLog();
+  // The running case's steps, for its row: which step ran out, and how long
+  // each before it took (GEL-443). Outside a case a step only runs.
+  let caseSteps = null;
+  const caseStep = (name, action) =>
+    caseSteps ? caseSteps.step(name, action) : action();
   const reportPath =
     process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/report.json";
   let lastFinished = null;
@@ -422,7 +494,7 @@ export async function startHarness() {
         );
       } catch (error) {
         if (error && typeof error === "object")
-          error.fixtureEvidence = {
+          error.evidence = {
             inviteRequests: invites.list(),
             page: await deadlineProbe(
               () => owner.page.evaluate(invitePageState),
@@ -458,23 +530,30 @@ export async function startHarness() {
         .click();
       await owner.page.waitForURL((url) => url.pathname === textPath);
     });
+    // In a case, its row lists these steps.
     async function channel(name, kind = "Sprache") {
-      await owner.page.locator("summary.server-sidebar-menu-button").click();
-      await owner.page
-        .getByRole("button", { name: "Kanal erstellen", exact: true })
-        .click();
+      await caseStep("channel-menu", async () => {
+        await owner.page.locator("summary.server-sidebar-menu-button").click();
+        await owner.page
+          .getByRole("button", { name: "Kanal erstellen", exact: true })
+          .click();
+      });
       dialog = owner.page.getByRole("dialog", { name: "Kanal erstellen" });
-      await dialog.getByText(kind, { exact: true }).click();
-      await dialog.getByLabel("Name", { exact: true }).fill(name);
-      const response = await responseTo(
-        owner.page,
-        (r) =>
-          new URL(r.url()).pathname === `/api/servers/${serverId}/channels` &&
-          r.request().method() === "POST",
-        () =>
-          dialog
-            .getByRole("button", { name: "Erstellen", exact: true })
-            .click(),
+      await caseStep("channel-form", async () => {
+        await dialog.getByText(kind, { exact: true }).click();
+        await dialog.getByLabel("Name", { exact: true }).fill(name);
+      });
+      const response = await caseStep("channel-create", () =>
+        responseTo(
+          owner.page,
+          (r) =>
+            new URL(r.url()).pathname === `/api/servers/${serverId}/channels` &&
+            r.request().method() === "POST",
+          () =>
+            dialog
+              .getByRole("button", { name: "Erstellen", exact: true })
+              .click(),
+        ),
       );
       check(
         [200, 201].includes(response.status()),
@@ -483,7 +562,9 @@ export async function startHarness() {
       );
       const created = await response.json();
       const path = `/s/${serverId}/c/${created.id}`;
-      await owner.page.locator(`.channel-sidebar a[href="${path}"]`).click();
+      await caseStep("channel-open", () =>
+        owner.page.locator(`.channel-sidebar a[href="${path}"]`).click(),
+      );
       return path;
     }
     const voicePath = await step("voice-channel-a", () =>
@@ -553,6 +634,8 @@ export async function startHarness() {
     });
     const start = Date.now();
     let row;
+    const steps = stepLog();
+    caseSteps = steps;
     try {
       if (isolation) await isolation();
       row = {
@@ -585,9 +668,14 @@ export async function startHarness() {
       // A failed fixture's step times sit where its PASS row has them.
       if (Array.isArray(error?.fixtureSteps))
         row.metrics = { ...row.metrics, steps: error.fixtureSteps };
-      if (error?.fixtureEvidence)
-        row.metrics = { ...row.metrics, ...error.fixtureEvidence };
+      // What a fixture or a scenario found out about its failure.
+      if (error?.evidence) row.metrics = { ...row.metrics, ...error.evidence };
+    } finally {
+      caseSteps = null;
     }
+    // A case's own steps, where a fixture's row has its own.
+    if (steps.steps.length > 0 && !Array.isArray(row.metrics?.steps))
+      row.metrics = { ...row.metrics, steps: steps.steps };
     if (isolation && !nativeInterfaceBlocked) {
       try {
         await isolation();
@@ -809,6 +897,7 @@ export async function startHarness() {
     },
     setIsolation,
     run,
+    step: caseStep,
     blocked,
     finish,
     report,
