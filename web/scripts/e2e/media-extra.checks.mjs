@@ -63,6 +63,8 @@ test("source identity reorder delivers authoritative Consumer messages without n
     "./probe.mjs": {
       sampleVideoSenders: async () => ({ actualFixture: true }),
       samplePublicationFlow: async () => ({}),
+      sendTimeline: () => [],
+      startSendTimeline: () => {},
     },
     "./publisher-encoders.mjs": {
       publisherEncoderProgress: (value) => value.actualFixture === true,
@@ -408,6 +410,7 @@ async function sdpRetryRow(firstFrameMs, { evidenceFails = false } = {}) {
   const actor = (name) => ({
     page: {
       evaluate: async (fn) => {
+        if (fn.name === "sendTimeline") return [];
         if (fn.name !== "samplePublicationFlow") return undefined;
         if (evidenceFails) throw new Error("evidence-read-failed");
         return flows[name];
@@ -507,6 +510,8 @@ test("a passing Live retry keeps its step times, and a slow one its raw records 
   assert.equal(slow.retrySteps.firstFrame, 4_465);
   assert.equal(slow.publisherLive.rpc.length, 2);
   assert.equal(slow.subscriberLive.consumers.length, 1);
+  assert.deepEqual(slow.sendTimeline, []);
+  assert.equal(fast.sendTimeline, undefined);
 });
 test("a Live retry whose evidence cannot be read still passes, with null steps", async () => {
   const row = await sdpRetryRow(4_465, { evidenceFails: true });
