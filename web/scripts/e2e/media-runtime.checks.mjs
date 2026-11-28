@@ -13,8 +13,10 @@ async function mediaProbe({
   loopback = false,
   optIn = false,
   portMax = false,
+  logFails = false,
 } = {}) {
   const calls = [],
+    owned = [],
     binary = "owned-media-control",
     secret = "PRIVATE-media-env-error";
   const manifest = {
@@ -38,6 +40,19 @@ async function mediaProbe({
   };
   let launchedEnv;
   const mocks = {
+    "./owned-process.mjs": {
+      clearLeftover: async () => {
+        owned.push("leftover");
+        return {};
+      },
+      heldByLeftover: (_leftover, error) => error,
+      recordOwned: async (_file, pid) => owned.push(`record-${pid}`),
+      forgetOwned: async () => owned.push("forget"),
+      killOnExit: () => {
+        owned.push("hook");
+        return () => owned.push("unhook");
+      },
+    },
     "./teardown.mjs": {
       ...teardown,
       terminateOwnedChild: (child) => teardown.terminateOwnedChild(child, 0),
@@ -61,12 +76,15 @@ async function mediaProbe({
             : path === "/tmp/manifest.json"
               ? JSON.stringify(manifest)
               : binary,
-      open: async () => ({
-        fd: 9,
-        close: async () => {
-          calls.push("log.close");
-        },
-      }),
+      open: async () => {
+        if (logFails) throw new Error(secret);
+        return {
+          fd: 9,
+          close: async () => {
+            calls.push("log.close");
+          },
+        };
+      },
     },
     "node:net": { createServer: () => port },
   };
@@ -103,12 +121,16 @@ async function mediaProbe({
   } catch (error) {
     failure = error;
   }
-  return { calls, failure, secret };
+  return { calls, owned, failure, secret };
 }
 test("own SFU child-stop failure still closes private log and exposes only controlled teardown steps", async () => {
-  const { calls, failure, secret } = await mediaProbe({ failStop: true });
+  const { calls, owned, failure, secret } = await mediaProbe({
+    failStop: true,
+  });
   assert.deepEqual(calls, ["spawn", "SIGTERM", "SIGKILL", "log.close"]);
   assert.equal(failure.name, "TeardownFailure");
+  // A failed teardown keeps the exit hook and the PID file (GEL-457).
+  assert.deepEqual(owned, ["leftover", "hook", "record-1"]);
   assert.deepEqual(failure.steps, ["media-child-stop", "child-sigterm"]);
   assert.ok(!JSON.stringify(failure).includes(secret));
 });
@@ -119,6 +141,15 @@ test("own SFU refuses a shared port before spawn; successful owned teardown rema
   const own = await mediaProbe();
   assert.equal(own.failure, undefined);
   assert.deepEqual(own.calls, ["spawn", "SIGTERM", "log.close"]);
+  // A leftover of an earlier runner goes before the port is probed; the new
+  // SFU is tied to this runner until its teardown succeeded (GEL-457).
+  assert.deepEqual(own.owned, [
+    "leftover",
+    "hook",
+    "record-1",
+    "unhook",
+    "forget",
+  ]);
 });
 
 test("SFU loopback is refused without opt-in, validates private control endpoints, and never inherits a port maximum", async () => {
@@ -134,4 +165,10 @@ test("SFU loopback is refused without opt-in, validates private control endpoint
   const positive = await mediaProbe({ loopback: true, optIn: true });
   assert.equal(positive.failure, undefined);
   assert.deepEqual(positive.calls, ["spawn", "SIGTERM", "log.close"]);
+});
+test("an SFU start that fails before it records its child leaves the PID file alone", async () => {
+  // Another run's fresh file is not this start's to delete (GEL-457).
+  const { owned, failure } = await mediaProbe({ logFails: true });
+  assert.ok(failure);
+  assert.deepEqual(owned, ["leftover"]);
 });

@@ -2,6 +2,7 @@ import { nativeEvaluate } from "./native-evaluate.mjs";
 import { sampleVideoConsumers } from "./probe.mjs";
 /* global window, document, innerWidth */
 import {
+  CheckFailure,
   check,
   click,
   liveTiles,
@@ -130,6 +131,7 @@ export async function progress(
       publisher,
     );
   await watchSource(actor, kind, { deadlineEpochMs: deadline, publisher });
+  const watchedAt = Date.now();
   const first = await until(
     () => snapshot(actor),
     (s) => {
@@ -145,7 +147,12 @@ export async function progress(
     },
     "decoded-correct-source-first-frame-deadline",
     Math.max(0, deadline - Date.now()),
-  );
+  ).catch((error) => {
+    // When the wait began and when the watcher had opted in (GEL-460).
+    if (error instanceof CheckFailure)
+      error.metrics = { ...error.metrics, startedAt: start, watchedAt };
+    throw error;
+  });
   const firstFrameMs = Date.now() - start;
   const initial = measuredVideo(first, kind, publisher);
   const last = await until(
@@ -177,7 +184,7 @@ export async function progress(
     "selected-network-path-mismatch",
     { paths },
   );
-  return { firstFrameMs, first, last };
+  return { firstFrameMs, startedAt: start, watchedAt, first, last };
 }
 async function reset(f) {
   for (const actor of [f.owner, f.member, f.watcher])

@@ -93,6 +93,41 @@ export async function concurrentLive(h, f, { reset, options }) {
   };
 }
 
+// The retried Live's steps in ms after its click (GEL-460), from both pages'
+// media RPC and consumer records: on every row, so that a slow retry that
+// still passes says which step took its time.
+export function retrySteps(clickedAt, retry, publisher, watcher) {
+  const last = (flow, method) =>
+    flow?.rpc?.filter((c) => c.method === method && c.kind === "s").at(-1);
+  const after = (at) =>
+    typeof at === "number" && typeof clickedAt === "number"
+      ? at - clickedAt
+      : null;
+  const produce = last(publisher, "produce");
+  const watch = last(watcher, "w");
+  const ready = last(watcher, "consumerReady");
+  const consumer = watcher?.consumers?.at(-1);
+  return {
+    produceSent: after(produce?.sentAt),
+    produceAnswered: after(produce?.answeredAt),
+    watchSent: after(watch?.sentAt),
+    watchAnswered: after(watch?.answeredAt),
+    consumerArrived: after(consumer?.arrivedAt),
+    consumerReadySent: after(ready?.sentAt),
+    consumerReadyAnswered: after(ready?.answeredAt),
+    lastLayerReport: after(consumer?.layers?.at),
+    layer: consumer?.layers
+      ? { spatial: consumer.layers.spatial, temporal: consumer.layers.temporal }
+      : null,
+    firstFrame:
+      typeof retry?.startedAt === "number"
+        ? after(retry.startedAt + retry.firstFrameMs)
+        : null,
+  };
+}
+// Above this, a passing row keeps both pages' raw records too.
+const SLOW_RETRY_MS = 1_500;
+
 export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
   await h.run("voice-only-duplex-single-source", ["02", "08b"], async () => {
     await reset(f);
@@ -285,6 +320,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       const warmupStart = Date.now();
       const cameraFixtureWarmup = { deadlineMs: 20_000, status: "FAIL" };
       let camera, before;
+      let retryClickedAt = null;
       try {
         const ready = await until(
           () => snapshot(f.member),
@@ -378,13 +414,34 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "rejected-sdp-ghost-live-display",
           { controlConfirmed: true, after: afterCamera.last },
         );
+        retryClickedAt = Date.now();
         await click(f.owner, "Live gehen");
         // The retry is the second display capture, drawn green.
         const retry = await progress(f.member, {
           ...options,
           color: [30, 220, 30],
         });
+        // Evidence only: a read that fails leaves nulls, never a failed row.
+        const publisherLive = await nativeEvaluate(
+          f.owner,
+          samplePublicationFlow,
+          { kind: "s" },
+        ).catch(() => null);
+        const subscriberLive = await nativeEvaluate(
+          f.member,
+          samplePublicationFlow,
+          { kind: "s" },
+        ).catch(() => null);
         return {
+          retrySteps: retrySteps(
+            retryClickedAt,
+            retry,
+            publisherLive,
+            subscriberLive,
+          ),
+          ...(retry.firstFrameMs > SLOW_RETRY_MS
+            ? { publisherLive, subscriberLive }
+            : {}),
           injection:
             "one real native setRemoteDescription rejection of malformed answer",
           cameraFixtureWarmup,
@@ -400,6 +457,9 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         const observed = await snapshot(f.owner).catch(() => null);
         const diagnostics = {
           cameraFixtureWarmup,
+          // With the RPC and consumer times below, where a slow retry spent
+          // its time (GEL-460).
+          retryClickedAt,
           faultExercised: observed?.rejectedSdp > 0,
           sdpRejectionErrors: observed?.rejectedSdpErrors ?? [],
           publisherLive: await nativeEvaluate(f.owner, samplePublicationFlow, {
@@ -411,6 +471,13 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
             { kind: "s" },
           ),
         };
+        if (retryClickedAt !== null)
+          diagnostics.retrySteps = retrySteps(
+            retryClickedAt,
+            null,
+            diagnostics.publisherLive,
+            diagnostics.subscriberLive,
+          );
         if (error instanceof CheckFailure) {
           error.metrics = { ...error.metrics, ...diagnostics };
           throw error;
