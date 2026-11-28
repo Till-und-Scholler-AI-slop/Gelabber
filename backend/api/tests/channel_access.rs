@@ -803,6 +803,31 @@ fn seated(frame: &Value, user: &str) -> bool {
         .any(|seat| seat["u"] == user)
 }
 
+/// Mutes (or unmutes) `marker` in the open `room` after the action under
+/// test and reads `watcher` up to that mute: it comes after anything the
+/// action sent. A roster pass writes into the socket before it returns, and
+/// signals reach it through the one Redis subscription in publish order.
+/// Returns what came before the marker.
+async fn before_marker(
+    watcher: &mut Ws,
+    marker: &mut Ws,
+    marker_user: &str,
+    sid: Uuid,
+    room: Uuid,
+    on: bool,
+) -> Vec<Value> {
+    send(
+        marker,
+        json!({"op": "sig", "t": "m", "s": sid, "c": room, "on": on}),
+    )
+    .await;
+    let (_, before) = ws::until_skipping(watcher, |f| {
+        f["op"] == "sig" && f["t"] == "m" && f["u"] == marker_user && f["on"] == on
+    })
+    .await;
+    before
+}
+
 async fn join_voice(addr: std::net::SocketAddr, client: &Client, sid: Uuid, room: Uuid) -> Ws {
     let mut ws = connect(addr, client).await;
     send(&mut ws, json!({"op": "sig", "t": "j", "s": sid, "c": room})).await;
@@ -836,7 +861,7 @@ async fn the_voice_roster_leaves_out_hidden_rooms(pool: PgPool) {
     let lobby = create_channel(&mut ada, sid, json!({"name": "Lobby", "kind": "voice"})).await;
     let lobby = id(&lobby.body["id"]);
     let mut cara_seat = join_voice(addr, &cara, sid, hidden).await;
-    let _ada_seat = join_voice(addr, &ada, sid, lobby).await;
+    let mut ada_seat = join_voice(addr, &ada, sid, lobby).await;
 
     // The subscribe snapshot shows the open room, not the hidden one.
     let mut ws = connect(addr, &bob).await;
@@ -845,20 +870,28 @@ async fn the_voice_roster_leaves_out_hidden_rooms(pool: PgPool) {
     assert!(seated(&snap, ada.user_id()), "{snap}");
     assert!(!seated(&snap, cara.user_id()), "{snap}");
 
-    // Neither the roster passes nor Cara's signaling tell Bob about her.
+    // Neither a roster pass nor Cara's signaling tell Bob about her.
     let cara_id = cara.user_id().to_owned();
-    let leaked = tokio::time::timeout(Duration::from_millis(2500), async {
-        loop {
-            state.gateway.refresh_rosters().await;
-            let frame = until(&mut ws, |f| f["op"] == "sig").await;
-            if frame["u"] == cara_id.as_str() || (frame["t"] == "r" && seated(&frame, &cara_id)) {
-                return frame;
-            }
-        }
+    state.gateway.refresh_rosters().await;
+    let before = before_marker(&mut ws, &mut ada_seat, ada.user_id(), sid, lobby, true).await;
+    assert!(
+        !before.iter().any(|f| f["op"] == "sig"
+            && (f["u"] == cara_id.as_str() || (f["t"] == "r" && seated(f, &cara_id)))),
+        "hidden seat leaked: {before:?}"
+    );
+
+    // The marker's mute changed what Bob sees: one roster pass shows it.
+    state.gateway.refresh_rosters().await;
+    until(&mut ws, |f| {
+        f["op"] == "sig"
+            && f["t"] == "r"
+            && f["snap"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|seat| seat["u"] == ada.user_id() && seat["m"] == true)
     })
     .await;
-    // A quiet socket also ends here: the outer timeout comes before `until`'s.
-    assert!(leaked.is_err(), "hidden seat leaked: {leaked:?}");
 
     // Cara mutes in the hidden room: Bob's filtered roster is unchanged, so
     // no roster frame tells him something happened there.
@@ -869,12 +902,11 @@ async fn the_voice_roster_leaves_out_hidden_rooms(pool: PgPool) {
     .await;
     until(&mut cara_seat, |f| f["op"] == "sig" && f["t"] == "m").await;
     state.gateway.refresh_rosters().await;
-    let resent = tokio::time::timeout(
-        Duration::from_millis(700),
-        until(&mut ws, |f| f["op"] == "sig" && f["t"] == "r"),
-    )
-    .await;
-    assert!(resent.is_err(), "roster for a hidden change: {resent:?}");
+    let before = before_marker(&mut ws, &mut ada_seat, ada.user_id(), sid, lobby, false).await;
+    assert!(
+        !before.iter().any(|f| f["op"] == "sig" && f["t"] == "r"),
+        "roster for a hidden change: {before:?}"
+    );
 
     // Given the role, Bob's next roster shows Cara without a reconnect.
     set_roles(&mut ada, sid, bob.user_id(), json!([r])).await;
@@ -985,6 +1017,9 @@ async fn watching_in_a_hidden_room_is_not_found_and_does_not_leak(pool: PgPool) 
     .await;
     assert_eq!(hidden.status, StatusCode::CREATED, "{}", hidden.body);
     let hidden = id(&hidden.body["id"]);
+    let lobby = create_channel(&mut ada, sid, json!({"name": "Lobby", "kind": "voice"})).await;
+    let lobby = id(&lobby.body["id"]);
+    let mut ada_seat = join_voice(addr, &ada, sid, lobby).await;
 
     let mut bob_ws = connect(addr, &bob).await;
     send(&mut bob_ws, json!({"op": "s", "s": sid})).await;
@@ -997,12 +1032,11 @@ async fn watching_in_a_hidden_room_is_not_found_and_does_not_leak(pool: PgPool) 
     let set = until(&mut cara_seat, |f| f["op"] == "sig" && f["t"] == "w").await;
     assert_eq!(set["w"], json!([ada.user_id()]), "{set}");
     let cara_id = cara.user_id().to_owned();
-    let leaked = tokio::time::timeout(
-        Duration::from_millis(1000),
-        until(&mut bob_ws, |f| {
-            f["op"] == "sig" && f["u"] == cara_id.as_str()
-        }),
-    )
-    .await;
-    assert!(leaked.is_err(), "hidden watch leaked: {leaked:?}");
+    let before = before_marker(&mut bob_ws, &mut ada_seat, ada.user_id(), sid, lobby, true).await;
+    assert!(
+        !before
+            .iter()
+            .any(|f| f["op"] == "sig" && f["u"] == cara_id.as_str()),
+        "hidden watch leaked: {before:?}"
+    );
 }

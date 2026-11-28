@@ -282,8 +282,9 @@ mod tests {
             tokio::task::yield_now().await;
         }
         caller.abort();
+        // The handle answers once the caller's future is dropped, so a
+        // permit the caller held is back by then.
         assert!(caller.await.unwrap_err().is_cancelled());
-        tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(pool.available_permits(), 0, "released while hashing");
 
         finish.send(()).unwrap();

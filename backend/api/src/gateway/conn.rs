@@ -1120,10 +1120,7 @@ mod tests {
 
         let mut last = long_ago;
         assert!(!idle_timer(&mut last, false, true, limit), "in a call");
-        assert!(
-            last.elapsed() < Duration::from_secs(1),
-            "the call counts as activity"
-        );
+        assert!(last > long_ago, "the call counts as activity");
         assert!(
             !idle_timer(&mut last, false, false, limit),
             "left: the five minutes start now"

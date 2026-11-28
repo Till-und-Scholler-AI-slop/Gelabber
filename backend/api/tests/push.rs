@@ -1074,6 +1074,7 @@ async fn receipts_are(pool: &PgPool, message: &str, expected: i64) {
 #[sqlx::test]
 async fn a_deleted_message_recalls_its_push(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         dm,
@@ -1126,8 +1127,8 @@ async fn a_deleted_message_recalls_its_push(pool: PgPool) {
         .send(Method::DELETE, &format!("/api/messages/{old}"), None)
         .await;
     assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
-    let late = tokio::time::timeout(Duration::from_millis(300), hits.recv()).await;
-    assert!(late.is_err(), "no recall past the TTL");
+    settled(&state).await;
+    assert!(hits.try_recv().is_err(), "no recall past the TTL");
 }
 
 #[sqlx::test]
@@ -1380,12 +1381,8 @@ async fn nothing_pushes_from_someone_blocked(pool: PgPool) {
     post(&mut c, &channel, &format!("<@{bob}> marker")).await;
     let payload = browser.open(&next(&mut hits).await);
     assert_eq!(payload["body"], "@Bob marker");
-    assert!(
-        tokio::time::timeout(Duration::from_millis(500), hits.recv())
-            .await
-            .is_err(),
-        "nothing from Ada"
-    );
+    settled(&state).await;
+    assert!(hits.try_recv().is_err(), "nothing from Ada");
 }
 
 /// Do not disturb (#590) holds back every push, DMs and mentions alike,
