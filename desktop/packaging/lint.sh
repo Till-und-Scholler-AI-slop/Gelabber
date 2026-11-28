@@ -31,9 +31,9 @@ if [ "${1:-}" = "--install" ]; then
 fi
 
 # The packaging scripts, desktop/native/scripts (libwebrtc, test desktop) and
-# live-tests.sh (e2e-extended.yml).
+# live-tests.sh and live-stack.sh (e2e-extended.yml).
 cd "$here/.."
-mapfile -t shell < <({ find packaging native/scripts -name '*.sh'; echo live-tests.sh; } | sort)
+mapfile -t shell < <({ find packaging native/scripts -name '*.sh'; printf '%s\n' live-tests.sh live-stack.sh; } | sort)
 "$shellcheck" --version | sed -n 2p
 "$shellcheck" --severity=warning "${shell[@]}"
 echo "shellcheck: ${#shell[@]} scripts"

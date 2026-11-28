@@ -9,6 +9,14 @@ name: Extended E2E
 
 on:
   workflow_dispatch:
+    inputs:
+      version_line:
+        description: >-
+          The version line a run by hand stands for (vX.Y). Empty: a version branch
+          is its own line, any other branch the development line (the newest vX.Y
+          branch, scripts/previous_release.sh); name it for a branch off an older line
+        required: false
+        default: ''
   push:
     branches: ['v[0-9]*']
     paths:
@@ -19,6 +27,7 @@ on:
       - '.github/workflows/scripts/e2e_jobs.py'
       - '.github/workflows/scripts/changes.py'
       - '.github/workflows/scripts/apt-install.sh'
+      - '.github/workflows/scripts/previous_release.sh'
       - 'deploy/compose/compose.yaml'
       - 'rust-toolchain.toml'
   pull_request:
@@ -327,10 +336,16 @@ jobs:
 
   # The desktop app's tests against the same kind of stack, seeded like the
   # parity scenes (desktop/live-tests.sh, GEL-376). Beside the faults, so it adds no wall time.
+  # Against a server of this tree and of the previous minor version: the app
+  # supports both (AGENTS.md, "Supported versions"; GEL-436).
   desktop-live:
-    name: Desktop app against the stack
+    name: Desktop app against the stack (${{ matrix.server }})
     needs: plan
     if: needs.plan.outputs.desktop == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        server: [this tree, previous minor]
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
@@ -462,7 +477,28 @@ jobs:
           PY
 
       - name: Build the API and the media server
+        if: matrix.server == 'this tree'
         run: cargo build --locked --manifest-path backend/Cargo.toml -p gelabber-api -p gelabber-media
+
+      # The newest release of the previous minor (the rule of the upgrade
+      # test): its published API and media images, its web client and seed.
+      - name: The previous minor's release
+        id: previous
+        if: matrix.server == 'previous minor'
+        env:
+          BASE_REF: ${{ github.base_ref || inputs.version_line }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          release=$(.github/workflows/scripts/previous_release.sh --fetch)
+          tag=${release%% *}
+          echo "The app of this tree against the server of $tag." | tee -a "$GITHUB_STEP_SUMMARY"
+          repo="${GITHUB_REPOSITORY,,}"
+          docker pull --quiet "ghcr.io/${repo}/api:${tag}"
+          docker pull --quiet "ghcr.io/${repo}/media:${tag}"
+          mkdir -p "$RUNNER_TEMP/previous"
+          git archive "$tag" web | tar -x -C "$RUNNER_TEMP/previous"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Build the desktop tests
         env:
@@ -479,6 +515,15 @@ jobs:
           node-version: 26.13.1
           cache: npm
           cache-dependency-path: web/package-lock.json
+
+      # Its Vite, seed and call.mjs, with the Chromium of its Playwright.
+      - name: The previous minor's web client
+        if: matrix.server == 'previous minor'
+        working-directory: ${{ runner.temp }}/previous/web
+        run: |
+          set -euo pipefail
+          npm ci
+          npx playwright install chromium
 
       - name: Vite and Chromium for the call's people
         run: |
@@ -513,43 +558,18 @@ jobs:
           GELABBER_DEV_PUBLIC_PAGES: scripts/parity/public-pages.json
           # The tests sign in again and again; the sign-in limit is for people.
           API_RATE_AUTH_PER_MIN: "0"
-        run: |
-          set -euo pipefail
-          logs="$RUNNER_TEMP/desktop-live-logs"
-          mkdir -p "$logs"
-          backend/target/debug/gelabber-api >"$logs/api.log" 2>&1 &
-          api=$!
-          backend/target/debug/gelabber-media >"$logs/media.log" 2>&1 &
-          media=$!
-          (cd web && exec node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5180 --strictPort) \
-            >"$logs/vite.log" 2>&1 &
-          vite=$!
-          trap 'kill "$api" "$media" "$vite" 2>/dev/null || true' EXIT
-          deadline=$((SECONDS + 120))
-          until curl -fsS http://127.0.0.1:8080/ready >/dev/null \
-            && curl -fsS "$GELABBER_TEST_SERVER/" >/dev/null; do
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "API or Vite did not come up within 120s"
-              tail -n 50 "$logs"/*.log
-              exit 1
-            fi
-            sleep 2
-          done
-          (cd web && node scripts/parity/seed.mjs "$GELABBER_TEST_SERVER")
-          status=0
-          # The client's recorded fixtures still have the API's shapes (desktop/client/tests/models.rs).
-          node desktop/client/tests/record-fixtures.mjs "$GELABBER_TEST_SERVER" --check || status=1
-          desktop/live-tests.sh || status=1
-          if [ "$status" -ne 0 ]; then
-            tail -n 100 "$logs"/*.log
-            exit 1
-          fi
+          PREVIOUS: ${{ steps.previous.outputs.tag }}
+        # desktop/live-stack.sh: the tree's binaries, or with a tag that
+        # release's images and web client.
+        run: >-
+          desktop/live-stack.sh "$RUNNER_TEMP/desktop-live-logs"
+          ${PREVIOUS:+"$PREVIOUS" "$RUNNER_TEMP/previous/web"}
 
       - name: Upload the stack's logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: desktop-live-logs
+          name: desktop-live-logs-${{ matrix.server == 'this tree' && 'tree' || 'previous' }}
           path: ${{ runner.temp }}/desktop-live-logs/
           if-no-files-found: warn
 

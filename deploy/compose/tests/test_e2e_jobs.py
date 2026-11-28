@@ -35,6 +35,7 @@ class Plan(unittest.TestCase):
                 ('.github/workflows/e2e-extended.yml', both),
                 ('.github/workflows/scripts/e2e_jobs.py', both),
                 ('.github/workflows/scripts/apt-install.sh', both),
+                ('.github/workflows/scripts/previous_release.sh', desktop),
                 ('deploy/compose/compose.yaml', both),
                 ('docs/README.md', set()),
                 ('deploy/backup.sh', set()),
@@ -88,6 +89,31 @@ class Outcome(unittest.TestCase):
         self.assertEqual(jobs['report']['needs'], 'outcome')
         step = jobs['report']['steps'][0]
         self.assertEqual(step['env']['RESULT'], '${{ needs.outcome.outputs.result }}')
+
+
+class PreviousMinor(unittest.TestCase):
+    def test_the_desktop_tests_also_run_against_the_previous_minor(self):
+        # The app supports servers of its own and the previous minor (GEL-436).
+        job = workflow_data.load('e2e-extended.yml')['jobs']['desktop-live']
+        self.assertEqual(job['strategy']['matrix']['server'], ['this tree', 'previous minor'])
+        self.assertIs(job['strategy']['fail-fast'], False)
+
+    def test_the_previous_release_follows_the_one_rule(self):
+        # previous_release.sh decides it for the upgrade test too; no second rule.
+        steps = workflow_data.load('e2e-extended.yml')['jobs']['desktop-live']['steps']
+        step = next(s for s in steps if s.get('id') == 'previous')
+        self.assertIn('.github/workflows/scripts/previous_release.sh --fetch', step['run'])
+        self.assertNotIn('git tag', step['run'])
+
+    def test_the_stack_starts_the_release_that_step_names(self):
+        # Without the tag, live-stack.sh starts this tree's servers: both legs
+        # would test the same thing, and stay green.
+        steps = workflow_data.load('e2e-extended.yml')['jobs']['desktop-live']['steps']
+        previous = next(s for s in steps if s.get('id') == 'previous')
+        self.assertIn('echo "tag=$tag" >> "$GITHUB_OUTPUT"', previous['run'])
+        stack = next(s for s in steps if 'desktop/live-stack.sh' in s.get('run', ''))
+        self.assertEqual(stack['env']['PREVIOUS'], '${{ steps.previous.outputs.tag }}')
+        self.assertIn('"$PREVIOUS" "$RUNNER_TEMP/previous/web"', stack['run'])
 
 
 class Libwebrtc(unittest.TestCase):
