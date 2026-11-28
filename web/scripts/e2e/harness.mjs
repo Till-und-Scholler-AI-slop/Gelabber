@@ -202,8 +202,11 @@ export function invitePageState() {
   return {
     path: location.pathname.replace(/[0-9a-f-]{36}/g, ":id"),
     dialogs: [
-      ...document.querySelectorAll('[role="dialog"],[role="alertdialog"]'),
+      ...document.querySelectorAll(
+        'dialog,[role="dialog"],[role="alertdialog"]',
+      ),
     ].map((dialog) => ({
+      open: dialog.tagName === "DIALOG" ? dialog.open : null,
       name:
         dialog.getAttribute("aria-label") ??
         dialog.querySelector("h1,h2")?.textContent?.trim().slice(0, 80) ??

@@ -442,7 +442,11 @@ test("a failed invite step can say which invite requests went out and how they e
   ]);
 });
 test("a failed invite step can say what the page showed: dialogs and the link field", () => {
-  const dialog = (label, text) => ({
+  // A role="dialog" element, or the app's native <dialog> (Modal) when
+  // `open` is given.
+  const dialog = (label, text, open) => ({
+    tagName: open === undefined ? "DIV" : "DIALOG",
+    open,
     getAttribute: (name) => (name === "aria-label" ? label : null),
     querySelector: () => null,
     textContent: text,
@@ -465,14 +469,17 @@ test("a failed invite step can say what the page showed: dialogs and the link fi
       "E2E einladen",
       "  Einladungslink konnte nicht erstellt werden.\n Erneut versuchen ",
     ),
+    dialog("Server erstellen", "Name", false),
   ]);
   assert.equal(failed.path, "/s/:id/c/x");
   assert.equal(failed.field, "missing");
   assert.deepEqual(JSON.parse(JSON.stringify(failed.dialogs)), [
     {
+      open: null,
       name: "E2E einladen",
       text: "Einladungslink konnte nicht erstellt werden. Erneut versuchen",
     },
+    { open: false, name: "Server erstellen", text: "Name" },
   ]);
   assert.equal(state({ value: "" }, []).field, "empty");
   assert.equal(state({ value: "http://h/invite/ABC" }, []).field, "link");
