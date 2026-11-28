@@ -1039,8 +1039,10 @@ mod tests {
     fn heif_iloc_with_empty_fields_costs_no_cpu() {
         // Zero-width fields and 0xFFFF extents per item: once took
         // seconds per few KB (three empty reads per extent), now skipped
-        // arithmetically: five fields per item, whatever its extents.
-        let others: Vec<(u16, u16)> = (2..1_002).map(|id| (id, 0xFFFF)).collect();
+        // arithmetically: five fields per item, whatever its extents. With
+        // 59,998 items, work per extent or per pair of items would outlast
+        // the test runner's timeout even where it reads nothing.
+        let others: Vec<(u16, u16)> = (2..60_000).map(|id| (id, 0xFFFF)).collect();
         READS.with(|reads| reads.set(0));
         assert_eq!(heif_extents(&iloc_v1([0, 0], &others), &[1]), Some(vec![]));
         let reads = READS.with(std::cell::Cell::get);

@@ -202,6 +202,8 @@ async fn a_peer_that_answers_pings_stays() {
     let mut peer = Peer::join(addr, &code).await;
     let mut pings = 0;
     // Reading answers each Ping (tungstenite queues the Pong on its own).
+    // The second is the subject: three idle timeouts pass, and a peer that
+    // answers stays through all of them.
     let ended = tokio::time::timeout(Duration::from_millis(1000), async {
         loop {
             match peer.socket.next().await {

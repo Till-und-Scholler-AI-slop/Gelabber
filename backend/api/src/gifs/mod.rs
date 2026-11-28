@@ -383,6 +383,8 @@ impl Gifs {
             debug!("gif share trigger dropped: klipy quota pause");
             return;
         }
+        // Taken here, before the spawn: a test reads all permits free right
+        // after this call as "no call started".
         let Ok(permit) = self.inner.shares.clone().try_acquire_owned() else {
             debug!("gif share trigger dropped: too many in flight");
             return;

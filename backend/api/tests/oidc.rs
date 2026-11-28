@@ -759,8 +759,7 @@ mod flows {
         let res = web_sign_in(&issuer, &mut other, sign_in(), ada()).await;
         assert_eq!(location(&res), "/");
         assert_eq!(other.bootstrap().await.body["user"]["email"], ADA);
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert_eq!(mailer.outbox().len(), 1);
+        assert_eq!(crate::common::settled_mails(&mailer).await.len(), 1);
     }
 
     #[sqlx::test]
