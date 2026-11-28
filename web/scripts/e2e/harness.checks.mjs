@@ -11,7 +11,7 @@ import {
   safeTarget,
   until,
 } from "./harness.mjs";
-import { decoded, interrupt } from "./media.mjs";
+import { decoded, interrupt, waitForPath } from "./media.mjs";
 import { chatFaultScenarios } from "./chat-faults.mjs";
 import { profiles } from "./profiles.mjs";
 import { instrument } from "./probe.mjs";
@@ -486,6 +486,77 @@ test("a failed invite step can say what the page showed: dialogs and the link fi
   ]);
   assert.equal(state({ value: "" }, []).field, "empty");
   assert.equal(state({ value: "http://h/invite/ABC" }, []).field, "link");
+});
+
+// GEL-465: one getStats() showed a selected pair `in-progress` on a page
+// whose frames had arrived. The path is waited for until each selected pair
+// has succeeded and is of the kind the profile demands.
+const peerWith = (connection, ...selected) => ({
+  connection,
+  senders: 0,
+  inbound: [{ kind: "video", packets: 9 }],
+  selected,
+});
+const pair = (state, local = "host", remote = "host") => ({
+  state,
+  local,
+  remote,
+});
+const reads = (...snapshots) => {
+  let at = 0;
+  return async () => snapshots[Math.min(at++, snapshots.length - 1)];
+};
+test("a selected path read in progress and then succeeded passes", async () => {
+  const paths = await waitForPath(
+    reads(
+      { peers: [peerWith("connected", pair("in-progress"))] },
+      { peers: [peerWith("connected", pair("succeeded"))] },
+    ),
+    false,
+  );
+  assert.deepEqual(
+    paths.map((p) => [p.peer, p.connection, p.state, p.video]),
+    [[0, "connected", "succeeded", true]],
+  );
+});
+test("a selected path still in progress at the deadline fails and names its connection", async () => {
+  await assert.rejects(
+    waitForPath(
+      reads({
+        peers: [
+          { connection: "closed", senders: null, inbound: [], selected: [] },
+          peerWith("connected", pair("succeeded")),
+          peerWith("connected", pair("in-progress")),
+        ],
+      }),
+      false,
+      300,
+    ),
+    (error) =>
+      error instanceof CheckFailure &&
+      error.message === "selected-network-path-mismatch" &&
+      JSON.stringify(error.metrics.paths.map((p) => [p.peer, p.state])) ===
+        JSON.stringify([
+          [1, "succeeded"],
+          [2, "in-progress"],
+        ]),
+  );
+});
+test("a selected path of the wrong kind fails: relayed where direct is demanded, and the reverse", async () => {
+  const relayed = {
+    peers: [peerWith("connected", pair("succeeded", "relay"))],
+  };
+  const direct = { peers: [peerWith("connected", pair("succeeded"))] };
+  for (const [snapshot, relay] of [
+    [relayed, false],
+    [direct, true],
+  ])
+    await assert.rejects(
+      waitForPath(reads(snapshot), relay, 300),
+      (error) => error.message === "selected-network-path-mismatch",
+    );
+  assert.equal((await waitForPath(reads(relayed), true)).length, 1);
+  assert.equal((await waitForPath(reads(direct), false)).length, 1);
 });
 
 test("a chat fault's request log keeps the server's and the chat's requests, IDs masked, until it stops", async () => {

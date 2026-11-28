@@ -75,6 +75,8 @@ export async function voiceOnlyControl({ owner, member }) {
       activePeers,
       armPlaybackRetry: () => {},
       progress: async () => ({}),
+      // Its own checks are in harness.checks.mjs; here the path is settled.
+      waitForPath: async () => [],
     },
   };
   const context = vm.createContext({}),
