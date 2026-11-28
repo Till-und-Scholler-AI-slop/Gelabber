@@ -95,11 +95,13 @@ export function instrument({ relay }) {
       producerId,
       epoch,
       rtpParameters,
+      // When each step of a slow start happened (GEL-460).
+      arrivedAt: Date.now(),
     });
   });
   window.addEventListener?.("gelabber:media-layers", ({ detail }) => {
     state.layers ??= new Map();
-    state.layers.set(detail.consumerId, { ...detail });
+    state.layers.set(detail.consumerId, { ...detail, at: Date.now() });
   });
   window.addEventListener?.("gelabber:media-producer", ({ detail }) => {
     const pc = state.peers.find((peer) =>
@@ -144,6 +146,7 @@ export function instrument({ relay }) {
             const request = item.pendingMedia.get(frame.id);
             if (request) {
               request.status = frame.op === "result" ? "PASS" : "FAIL";
+              request.answeredAt = Date.now();
               request.error =
                 frame.op === "err" && typeof frame.e === "string"
                   ? /^[a-z_]{1,64}$/.test(frame.e)
@@ -241,6 +244,8 @@ export function instrument({ relay }) {
               on: typeof frame.on === "boolean" ? frame.on : null,
               status: "pending",
               error: null,
+              sentAt: Date.now(),
+              answeredAt: null,
             };
             item.pendingMedia.set(frame.id, request);
             if (item.pendingMedia.size > 64)
@@ -411,6 +416,16 @@ export async function samplePublicationFlow({ kind }) {
             source.pc.connectionState !== "closed",
         )
         .map(async (source) => ({
+          arrivedAt: source.arrivedAt ?? null,
+          // The server's last word on which layer it forwards; no IDs.
+          layers: (({ spatialLayer, temporalLayer, at } = {}) =>
+            at === undefined
+              ? null
+              : {
+                  spatial: spatialLayer ?? null,
+                  temporal: temporalLayer ?? null,
+                  at,
+                })(state.layers?.get(source.consumerId)),
           bound:
             source.pc.getReceivers().includes(source.receiver) &&
             source.receiver.track === source.track,
@@ -753,6 +768,20 @@ export async function sample({ deadlineEpochMs } = {}) {
         .filter((s) => s.type === type)
         .map((s) => ({
           kind: s.kind ?? s.mediaType,
+          // Which source a received stream is, or the SDK's padding-only
+          // probation stream that never decodes (GEL-460).
+          ...(outbound
+            ? {}
+            : {
+                source:
+                  s.ssrc === 1234 || s.trackIdentifier === "probator"
+                    ? "probator"
+                    : (state.incomingTracks.find((source) =>
+                        source.rtpParameters?.encodings?.some(
+                          (encoding) => encoding.ssrc === s.ssrc,
+                        ),
+                      )?.sourceKind ?? null),
+              }),
           bytes: (outbound ? s.bytesSent : s.bytesReceived) ?? 0,
           packets: (outbound ? s.packetsSent : s.packetsReceived) ?? 0,
           frames: (outbound ? s.framesEncoded : s.framesDecoded) ?? null,
