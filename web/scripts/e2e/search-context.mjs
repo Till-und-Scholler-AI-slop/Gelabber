@@ -1,4 +1,4 @@
-/* global process, document, sessionStorage, Event, console, setTimeout, Buffer, requestAnimationFrame, WheelEvent */
+/* global process, document, sessionStorage, Event, console, setTimeout, Buffer, requestAnimationFrame, MessageChannel */
 // Local browser integration for scoped search navigation; no physical-device claim.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -240,21 +240,53 @@ try {
     .last()
     .getByText("context-draft.txt", { exact: true })
     .waitFor();
-  // Sets the list's position (when given), waits until its height, visible
+  // Places the list `offset` px from its end, waits until its height, visible
   // height and position hold for 5 frames, and reads where it stands.
   const settleList = (offsetFromEnd) =>
     log.evaluate(async (el, offset) => {
-      if (offset !== null)
-        el.scrollTop = el.scrollHeight - el.clientHeight - offset;
       const state = () => [el.scrollHeight, el.clientHeight, el.scrollTop];
       let still = 0;
       let last = state();
-      // At most 2 s of frames: a list that never holds says so.
-      for (let frame = 0; still < 5 && frame < 120; frame++) {
-        await new Promise(requestAnimationFrame);
-        const now = state();
-        still = now.every((v, i) => v === last[i]) ? still + 1 : 0;
-        last = now;
+      // The composer may still be growing or shrinking (its animation) when
+      // the list is placed: a list the app left where it was put, whose gap
+      // the layout changed around it, is placed again, at most three times.
+      // A list the app moved is not, and fails where it is used. A move down
+      // that ends near the end is the reader coming back to it (the list
+      // pins), so a place below the current one is reached as the first
+      // was: from the end, upwards.
+      // Writes leave the animation frame first: a scroll written inside
+      // one has its event after that frame's ResizeObserver, which records
+      // the new position first, so the list would see no move.
+      const task = () =>
+        new Promise((resolve) => {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = resolve;
+          channel.port2.postMessage(0);
+        });
+      for (let placement = 0; placement < 3; placement++) {
+        if (placement > 0) {
+          await task();
+          if (el.scrollHeight - el.clientHeight - offset > el.scrollTop) {
+            el.scrollTop = el.scrollHeight;
+            await new Promise(requestAnimationFrame);
+            await new Promise(requestAnimationFrame);
+            await task();
+          }
+        }
+        el.scrollTop = el.scrollHeight - el.clientHeight - offset;
+        const placed = el.scrollTop;
+        still = 0;
+        last = state();
+        // At most 2 s of frames: a list that never holds says so.
+        for (let frame = 0; still < 5 && frame < 120; frame++) {
+          await new Promise(requestAnimationFrame);
+          const now = state();
+          still = now.every((v, i) => v === last[i]) ? still + 1 : 0;
+          last = now;
+        }
+        const [height, visible, top] = last;
+        if (top !== placed || Math.abs(height - top - visible - offset) <= 2)
+          break;
       }
       const [height, visible, top] = last;
       return {
@@ -270,25 +302,16 @@ try {
     (state) => state.held && state.gap <= 1,
     "canonical-end-before-native-up",
   );
-  // The reader leaves the end. A wheel moves 25 px here and 85 to 105 px on
-  // a CI runner, too far for this place, and a scrollbar-like jump keeps the
-  // list pinned when its height changed since its last recorded position
-  // (scrollEndIntent), so it is pulled back to the end: GEL-461, a defect a
-  // scrollbar user can hit too. Until it is fixed the intent goes the way
-  // the list reads it, as an upward wheel that moves nothing; the wheel goes
-  // with the fix.
-  const leaveEnd = (offset) =>
-    log
-      .evaluate((el) =>
-        el.dispatchEvent(
-          new WheelEvent("wheel", { deltaY: -1, bubbles: true }),
-        ),
-      )
-      .then(() => settleList(offset));
-  await until(
-    () => leaveEnd(40),
-    (state) => state.held && state.gap > 16 && state.gap < 64,
-    "history-place-before-search",
+  // The reader leaves the end with a plain move, as a scrollbar does: a
+  // wheel moves 25 px here and 85 to 105 px on a CI runner, too far for this
+  // place. The list must stay where the move put it, also when its height
+  // changed at the same time (GEL-461).
+  const leaveEnd = (offset) => settleList(offset);
+  // One move, no retry: a list pulled back to its end fails here.
+  const near = await leaveEnd(40);
+  assert.ok(
+    near.held && near.gap > 16 && near.gap < 64,
+    `history-place-before-search: ${JSON.stringify(near)}`,
   );
   const beforeUnread = (await channelState(member, channel)).unread_count;
   const search = async (value) => {
@@ -461,11 +484,11 @@ try {
     await member.page.getByText(marker, { exact: true }).waitFor();
     // Up from the end, as a reader leaves it, and really in the history:
     // a list pulled back to its end would make the check below pass on
-    // nothing (GEL-461, see the fixture above).
-    await until(
-      () => leaveEnd(200),
-      (state) => state.held && state.gap > 150,
-      "place-reader-not-in-history",
+    // nothing (GEL-461).
+    const away = await leaveEnd(200);
+    assert.ok(
+      away.held && away.gap > 150,
+      `place-reader-not-in-history: ${JSON.stringify(away)}`,
     );
     const before = await place(member.page);
     await search(marker);

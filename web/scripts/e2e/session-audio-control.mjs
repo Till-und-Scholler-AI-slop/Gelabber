@@ -244,6 +244,7 @@ export async function sessionAudioControl({
         window.__e2e.retryArmed = true;
       },
       progress: async () => ({ syntheticPositiveFixture: true }),
+      waitForPath: async () => [],
     },
   };
   const context = vm.createContext({}),

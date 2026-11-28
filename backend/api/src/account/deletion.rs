@@ -353,7 +353,7 @@ pub async fn purge(state: &AppState, user_id: Uuid) -> Result<bool, ApiError> {
     info!(%user_id, "account purged");
 
     if let Some(mailer) = state.mail.clone() {
-        tokio::spawn(async move {
+        mailer.clone().spawn(async move {
             let mail = Mail::AccountDeleted;
             match mailer.send(&email, &mail, locale).await {
                 Ok(()) => info!(%user_id, kind = mail.kind(), "account mail sent"),

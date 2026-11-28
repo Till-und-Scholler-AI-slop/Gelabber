@@ -589,7 +589,7 @@ async fn ban_serializes_with_join_after_ban_check_before_insert(pool: PgPool) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("join reached insert barrier");
-    let mut ban_task = tokio::spawn(async move {
+    let ban_task = tokio::spawn(async move {
         owner
             .send(
                 Method::POST,
@@ -598,9 +598,9 @@ async fn ban_serializes_with_join_after_ban_check_before_insert(pool: PgPool) {
             )
             .await
     });
-    let prematurely_finished = tokio::time::timeout(Duration::from_millis(100), &mut ban_task)
-        .await
-        .ok();
+    // The join at its barrier and the ban behind the join's locks.
+    common::lock_waiters(&pool, 2).await;
+    let ban_waited_for_join = !ban_task.is_finished();
     sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(lock)
         .execute(&mut *blocker)
@@ -615,11 +615,7 @@ async fn ban_serializes_with_join_after_ban_check_before_insert(pool: PgPool) {
         StatusCode::NOT_FOUND => assert_eq!(joined.body["error"], "not_found"),
         status => panic!("unexpected join response {status}: {}", joined.body),
     }
-    let ban_waited_for_join = prematurely_finished.is_none();
-    let banned = match prematurely_finished {
-        Some(result) => result.unwrap(),
-        None => ban_task.await.unwrap(),
-    };
+    let banned = ban_task.await.unwrap();
     assert_eq!(banned.status, StatusCode::NO_CONTENT);
     assert!(
         ban_waited_for_join,

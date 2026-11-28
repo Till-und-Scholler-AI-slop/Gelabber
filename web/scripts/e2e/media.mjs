@@ -2,6 +2,7 @@ import { nativeEvaluate } from "./native-evaluate.mjs";
 import { sampleVideoConsumers } from "./probe.mjs";
 /* global window, document, innerWidth */
 import {
+  CheckFailure,
   check,
   click,
   liveTiles,
@@ -109,6 +110,61 @@ export function measuredVideo(s, kind, publisher) {
     (v) => v.kind === kind && (!publisher || v.expectedPublisher === true),
   );
 }
+// The selected candidate pair of each connection that is not closed, with
+// which connection it is (its index on the page), that connection's state,
+// whether it sends, and whether it receives video.
+export function selectedPaths(s) {
+  return s.peers.flatMap((p, peer) =>
+    p.connection === "closed"
+      ? []
+      : p.selected.map((pair) => ({
+          peer,
+          connection: p.connection,
+          senders: p.senders,
+          video: p.inbound.some((r) => r.kind === "video" && r.packets > 0),
+          ...pair,
+        })),
+  );
+}
+// Every selected pair has succeeded, and goes through a relay exactly when
+// the profile demands one.
+export function pathsMatch(paths, relay) {
+  return (
+    paths.length > 0 &&
+    paths.every(
+      (p) =>
+        p.state === "succeeded" &&
+        (relay
+          ? p.local === "relay"
+          : p.local !== "relay" && p.remote !== "relay"),
+    )
+  );
+}
+// A selected pair can read `in-progress` in one getStats() while its
+// connection carries the media: libwebrtc's state for "check has been sent,
+// transaction is in progress" (p2p/base/connection_info.h). Whether a pair
+// that succeeded goes back to it on a later check is not read here, so the
+// path is waited for, not read once (GEL-465). A check on a path that
+// carries media is answered within a round trip; 5 s, as long as the wait
+// for changing frames before it, is no moment of re-checking.
+export const SELECTED_PATH_MS = 5_000;
+export async function waitForPath(read, relay, budget = SELECTED_PATH_MS) {
+  try {
+    return await until(
+      async () => selectedPaths(await read()),
+      (paths) => pathsMatch(paths, relay),
+      "selected-network-path-mismatch",
+      budget,
+    );
+  } catch (error) {
+    if (
+      error instanceof CheckFailure &&
+      error.message === "selected-network-path-mismatch"
+    )
+      error.metrics = { paths: error.metrics.last };
+    throw error;
+  }
+}
 export async function progress(
   actor,
   {
@@ -130,6 +186,7 @@ export async function progress(
       publisher,
     );
   await watchSource(actor, kind, { deadlineEpochMs: deadline, publisher });
+  const watchedAt = Date.now();
   const first = await until(
     () => snapshot(actor),
     (s) => {
@@ -145,7 +202,12 @@ export async function progress(
     },
     "decoded-correct-source-first-frame-deadline",
     Math.max(0, deadline - Date.now()),
-  );
+  ).catch((error) => {
+    // When the wait began and when the watcher had opted in (GEL-460).
+    if (error instanceof CheckFailure)
+      error.metrics = { ...error.metrics, startedAt: start, watchedAt };
+    throw error;
+  });
   const firstFrameMs = Date.now() - start;
   const initial = measuredVideo(first, kind, publisher);
   const last = await until(
@@ -164,20 +226,8 @@ export async function progress(
     "decoded-rendered-changing-frames-deadline",
     5_000,
   );
-  const paths = activePeers(last).flatMap((p) => p.selected);
-  check(
-    paths.length > 0 &&
-      paths.every(
-        (p) =>
-          p.state === "succeeded" &&
-          (relay
-            ? p.local === "relay"
-            : p.local !== "relay" && p.remote !== "relay"),
-      ),
-    "selected-network-path-mismatch",
-    { paths },
-  );
-  return { firstFrameMs, first, last };
+  await waitForPath(() => snapshot(actor), relay);
+  return { firstFrameMs, startedAt: start, watchedAt, first, last };
 }
 async function reset(f) {
   for (const actor of [f.owner, f.member, f.watcher])

@@ -62,8 +62,3 @@ gelabber-testing = { path = "../testing" }
 egui_kittest = { version = "0.37.0", features = ["wgpu", "eframe", "snapshot"] }
 # The stand-in API's gateway (app/testkit.rs); the client's own tungstenite.
 tungstenite = "0.30.0"
-
-# Against the seeded stack with the native media core (see its header).
-[[test]]
-name = "voice_live"
-required-features = ["media"]

@@ -95,11 +95,22 @@ export function instrument({ relay }) {
       producerId,
       epoch,
       rtpParameters,
+      // When each step of a slow start happened (GEL-460).
+      arrivedAt: Date.now(),
     });
   });
   window.addEventListener?.("gelabber:media-layers", ({ detail }) => {
     state.layers ??= new Map();
-    state.layers.set(detail.consumerId, { ...detail });
+    state.layers.set(detail.consumerId, { ...detail, at: Date.now() });
+    // Every report, not only the last, without IDs (GEL-460).
+    state.layerHistory ??= [];
+    state.layerHistory.push({
+      consumerId: detail.consumerId,
+      spatial: detail.spatialLayer ?? null,
+      temporal: detail.temporalLayer ?? null,
+      at: Date.now(),
+    });
+    if (state.layerHistory.length > 64) state.layerHistory.shift();
   });
   window.addEventListener?.("gelabber:media-producer", ({ detail }) => {
     const pc = state.peers.find((peer) =>
@@ -144,6 +155,7 @@ export function instrument({ relay }) {
             const request = item.pendingMedia.get(frame.id);
             if (request) {
               request.status = frame.op === "result" ? "PASS" : "FAIL";
+              request.answeredAt = Date.now();
               request.error =
                 frame.op === "err" && typeof frame.e === "string"
                   ? /^[a-z_]{1,64}$/.test(frame.e)
@@ -241,6 +253,8 @@ export function instrument({ relay }) {
               on: typeof frame.on === "boolean" ? frame.on : null,
               status: "pending",
               error: null,
+              sentAt: Date.now(),
+              answeredAt: null,
             };
             item.pendingMedia.set(frame.id, request);
             if (item.pendingMedia.size > 64)
@@ -411,6 +425,19 @@ export async function samplePublicationFlow({ kind }) {
             source.pc.connectionState !== "closed",
         )
         .map(async (source) => ({
+          arrivedAt: source.arrivedAt ?? null,
+          // The server's last word on which layer it forwards; no IDs.
+          layerHistory: (state.layerHistory ?? [])
+            .filter((report) => report.consumerId === source.consumerId)
+            .map(({ spatial, temporal, at }) => ({ spatial, temporal, at })),
+          layers: (({ spatialLayer, temporalLayer, at } = {}) =>
+            at === undefined
+              ? null
+              : {
+                  spatial: spatialLayer ?? null,
+                  temporal: temporalLayer ?? null,
+                  at,
+                })(state.layers?.get(source.consumerId)),
           bound:
             source.pc.getReceivers().includes(source.receiver) &&
             source.receiver.track === source.track,
@@ -753,6 +780,20 @@ export async function sample({ deadlineEpochMs } = {}) {
         .filter((s) => s.type === type)
         .map((s) => ({
           kind: s.kind ?? s.mediaType,
+          // Which source a received stream is, or the SDK's padding-only
+          // probation stream that never decodes (GEL-460).
+          ...(outbound
+            ? {}
+            : {
+                source:
+                  s.ssrc === 1234 || s.trackIdentifier === "probator"
+                    ? "probator"
+                    : (state.incomingTracks.find((source) =>
+                        source.rtpParameters?.encodings?.some(
+                          (encoding) => encoding.ssrc === s.ssrc,
+                        ),
+                      )?.sourceKind ?? null),
+              }),
           bytes: (outbound ? s.bytesSent : s.bytesReceived) ?? 0,
           packets: (outbound ? s.packetsSent : s.packetsReceived) ?? 0,
           frames: (outbound ? s.framesEncoded : s.framesDecoded) ?? null,
@@ -897,12 +938,15 @@ export async function sample({ deadlineEpochMs } = {}) {
     ).length,
     rejectedSdp: state.rejectedSdp,
     rejectedSdpErrors: state.rejectedSdpErrors?.slice() ?? [],
+    // Over every connection that received RTP for the track, not one
+    // connection a scenario picked: a pick made before the receiving
+    // connection was up took the send connection, which receives nothing
+    // (GEL-466). A second live path for one source counts twice.
     roomAudio: (() => {
       const incoming = [
         ...new Map(state.incomingTracks.map((t) => [t.track, t])).values(),
       ].filter(
         (t) =>
-          t.pc === state.expectedAudioPeer &&
           t.pc.connectionState !== "closed" &&
           t.track.kind === "audio" &&
           t.track.readyState === "live" &&
@@ -923,7 +967,6 @@ export async function sample({ deadlineEpochMs } = {}) {
         ...new Map(state.incomingTracks.map((t) => [t.track, t])).values(),
       ].filter(
         (t) =>
-          t.pc === state.expectedAudioPeer &&
           t.pc.connectionState !== "closed" &&
           t.track.kind === "video" &&
           t.track.readyState === "live" &&
@@ -988,4 +1031,49 @@ export async function sample({ deadlineEpochMs } = {}) {
       liveOff: s.liveOff,
     })),
   };
+}
+// What the publisher sends of one source, per simulcast layer, every
+// `everyMs` for `forMs` (GEL-460): whether a slow first frame waited for the
+// encoder or for the server. Runs in the page; read it with sendTimeline().
+export function startSendTimeline({ kind, everyMs = 200, forMs = 6_000 }) {
+  const state = window.__e2e;
+  const samples = (state.sendTimeline = []);
+  const until = Date.now() + forMs;
+  const tick = async () => {
+    const source = state.outgoingSources?.get(kind);
+    const sample = { at: Date.now(), bwe: null, layers: [] };
+    try {
+      if (source?.sender) {
+        const active = (source.sender.getParameters?.().encodings ?? []).map(
+          (encoding) => encoding.active !== false,
+        );
+        const report = await source.sender.getStats();
+        for (const row of report.values()) {
+          if (row.type === "outbound-rtp")
+            sample.layers.push({
+              rid: row.rid ?? null,
+              frames: row.framesEncoded ?? 0,
+              keyframes: row.keyFramesEncoded ?? 0,
+              sent: row.framesSent ?? null,
+              pli: row.pliCount ?? 0,
+              fir: row.firCount ?? 0,
+              width: row.frameWidth ?? null,
+              limit: row.qualityLimitationReason ?? null,
+              active: active[row.encodingIndex ?? sample.layers.length] ?? null,
+            });
+          if (row.type === "candidate-pair" && row.nominated)
+            sample.bwe = row.availableOutgoingBitrate ?? null;
+        }
+      }
+    } catch {
+      sample.error = true;
+    }
+    samples.push(sample);
+    if (Date.now() < until) state.sendTimelineTimer = setTimeout(tick, everyMs);
+  };
+  clearTimeout(state.sendTimelineTimer);
+  void tick();
+}
+export function sendTimeline() {
+  return window.__e2e.sendTimeline ?? [];
 }

@@ -756,6 +756,10 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::mpsc;
 
+    /// How long a call may take that must not wait on a lock the test
+    /// holds: one that waits never ends, so this only has to outlast Redis.
+    const NOT_WAITING: Duration = Duration::from_secs(5);
+
     fn gateway() -> Gateway {
         Gateway::new(
             redis::Client::open(std::env::var("REDIS_URL").unwrap()).unwrap(),
@@ -960,15 +964,17 @@ mod tests {
         let (u, s) = (Uuid::new_v4(), Uuid::new_v4());
         let (id, mut rx) = socket(&g, u).await;
         g.watch_server(id, s).await;
+        // Held for the rest of the test: a call that waits on it never
+        // ends, so the deadline only has to outlast one that does not.
         let busy = g.connections.inner.voice_ops.lock().await;
         assert!(matches!(
-            tokio::time::timeout(Duration::from_millis(200), g.refresh_voice(id)).await,
+            tokio::time::timeout(NOT_WAITING, g.refresh_voice(id)).await,
             Ok(Ok(()))
         ));
         // The roster pass does not wait on it either, and still reaches a
         // socket without a seat.
         assert!(
-            tokio::time::timeout(Duration::from_millis(200), g.refresh_rosters())
+            tokio::time::timeout(NOT_WAITING, g.refresh_rosters())
                 .await
                 .is_ok()
         );
@@ -1334,12 +1340,23 @@ mod tests {
             unreachable!()
         };
         assert_eq!(t, SigKind::L);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(300), next_about(&mut rx, u))
-                .await
-                .is_err()
-        );
-        for id in [first, second, peer] {
+        // A seat taken after the leave: its announcement reaches the peer
+        // after anything the leave published, so nothing about `u` may
+        // come before it.
+        let newcomer = Uuid::new_v4();
+        let (marker, _rm) = socket(&g, newcomer).await;
+        g.join_voice(marker, newcomer, s, c).await.unwrap();
+        loop {
+            let frame = roster(&mut rx).await;
+            match &frame {
+                ServerFrame::Sig { u: Some(who), .. } if *who == newcomer => break,
+                ServerFrame::Sig { u: Some(who), .. } => {
+                    assert_ne!(*who, u, "more about {u} after its `l`: {frame:?}")
+                }
+                _ => {}
+            }
+        }
+        for id in [first, second, peer, marker] {
             g.detach(id).await;
         }
     }

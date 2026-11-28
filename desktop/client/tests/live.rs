@@ -84,7 +84,7 @@ fn signed_in(fixture: &Fixture, who: &str) -> Client {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); GEL-376 decides where it runs"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); runs in e2e-extended.yml after merges (GEL-376)"]
 fn seeded_workspace_loads_like_the_web() {
     let fx = fixture();
     let lena = signed_in(&fx, "lena");
@@ -196,7 +196,7 @@ impl Drop for Scratch {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); GEL-376 decides where it runs"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); runs in e2e-extended.yml after merges (GEL-376)"]
 fn messages_typing_and_presence_arrive_over_the_gateway() {
     let fx = fixture();
     let lena = signed_in(&fx, "lena");
@@ -381,19 +381,25 @@ fn messages_typing_and_presence_arrive_over_the_gateway() {
     );
     raw.stop();
 
-    // Kicking Jonas reaches him as a notice and drops the server.
+    // Kicking Jonas drops the server and reaches him as a notice, among
+    // the others he has by then (the reply above is one).
     lena.kick(server, jonas_id);
+    wait(&jonas, "server dropped", |s| s.server(server).is_none());
     let start = Instant::now();
     let mut notices = Vec::new();
-    while notices.is_empty() && start.elapsed() < Duration::from_secs(10) {
-        notices = jonas.take_notices();
+    while !notices.iter().any(|n| matches!(n, Notice::Kicked { .. }))
+        && start.elapsed() < Duration::from_secs(10)
+    {
+        notices.extend(jonas.take_notices());
         std::thread::sleep(Duration::from_millis(25));
     }
-    assert!(matches!(
-        notices.first(),
-        Some(Notice::Kicked { text, .. }) if text == "Du wurdest vom Server entfernt."
-    ));
-    wait(&jonas, "server dropped", |s| s.server(server).is_none());
+    assert!(
+        notices.iter().any(|n| matches!(
+            n,
+            Notice::Kicked { server: from, .. } if *from == server
+        )),
+        "{notices:?}"
+    );
 
     drop(scratch);
     jonas.logout();
@@ -423,7 +429,7 @@ fn scratch_server(client: &Client, name: &str) -> (Scratch, Uuid) {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); GEL-376 decides where it runs"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); runs in e2e-extended.yml after merges (GEL-376)"]
 fn attachments_upload_bind_and_download() {
     let fx = fixture();
     let lena = signed_in(&fx, "lena");
@@ -462,7 +468,7 @@ fn attachments_upload_bind_and_download() {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); GEL-376 decides where it runs"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); runs in e2e-extended.yml after merges (GEL-376)"]
 fn reconnect_resumes_without_losing_or_repeating_events() {
     let fx = fixture();
     let lena = signed_in(&fx, "lena");
@@ -530,7 +536,7 @@ fn reconnect_resumes_without_losing_or_repeating_events() {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); GEL-376 decides where it runs"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); runs in e2e-extended.yml after merges (GEL-376)"]
 fn switching_accounts_keeps_nothing_of_the_first() {
     let fx = fixture();
     let client = signed_in(&fx, "lena");

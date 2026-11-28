@@ -11,6 +11,13 @@ import { objectStatus } from "./s3-object.mjs";
 import { tcpFaultProxy, storageFaultProxy } from "./faults.mjs";
 import { deleteTopicKeys } from "./redis-command.mjs";
 import {
+  clearLeftover,
+  forgetOwned,
+  killOnExit,
+  heldByLeftover,
+  recordOwned,
+} from "./owned-process.mjs";
+import {
   closeOwnedApi,
   terminateOwnedChild,
   TeardownFailure,
@@ -62,6 +69,10 @@ export async function startFaultApi({
     manifest.sha256,
     "API binary provenance mismatch",
   );
+  // A dead runner's API still holds the port and the fault database: it goes
+  // before both are checked (GEL-457).
+  const pidFile = `/tmp/gelabber-e2e-fault-api-${apiPort}.pid`;
+  const leftover = await clearLeftover(pidFile, manifest.binaryPath, "API");
   const pgEnv = {
     ...process.env,
     PGHOST: db.hostname,
@@ -80,26 +91,39 @@ export async function startFaultApi({
       )
     ).stdout.trim();
   }
-  assert.equal(
-    await sql(
+  if (
+    (await sql(
       "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()",
-    ),
-    "0",
-    "Another process already uses the fault DB",
-  );
+    )) !== "0"
+  )
+    throw heldByLeftover(
+      leftover,
+      new assert.AssertionError({
+        message: "Another process already uses the fault DB",
+      }),
+      "fault-db",
+    );
   const proxies = [];
   let child,
     logfile,
+    unhook,
+    recorded = false,
     paused = false;
   const locks = new Set();
   const topics = new Set();
   async function close() {
     await closeOwnedApi({ locks, proxies, child, logfile });
+    unhook?.();
+    // Only the file this start wrote: another run's, or the reason a kept
+    // leftover stays, belongs to the next start.
+    if (recorded) await forgetOwned(pidFile);
   }
   try {
     const portProbe = createServer();
     portProbe.listen({ host: "127.0.0.1", port: apiPort, exclusive: true });
-    await once(portProbe, "listening");
+    await once(portProbe, "listening").catch((error) => {
+      throw heldByLeftover(leftover, error);
+    });
     await new Promise((r) => portProbe.close(r));
     const redis = await tcpFaultProxy(env.REDIS_URL, redisPort);
     proxies.push(redis);
@@ -138,10 +162,15 @@ export async function startFaultApi({
       },
       stdio: ["ignore", logfile.fd, logfile.fd],
     });
+    unhook = killOnExit(child);
     let spawnError = false;
     child.on("error", () => {
       spawnError = true;
     });
+    if (child.pid) {
+      await recordOwned(pidFile, child.pid, manifest.binaryPath);
+      recorded = true;
+    }
     const origin = `http://127.0.0.1:${apiPort}`;
     let ready = false;
     const deadline = Date.now() + 30_000;
@@ -161,6 +190,7 @@ export async function startFaultApi({
     local(redisTarget);
     return {
       origin,
+      leftoverRemoved: leftover.removed ?? null,
       redis,
       storage,
       database,

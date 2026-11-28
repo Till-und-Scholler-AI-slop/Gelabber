@@ -947,11 +947,15 @@ mod tests {
     #[test]
     fn window_reset_allows_again() {
         let limiter = Limiter::new();
-        let window = Duration::from_millis(30);
-        assert!(limiter.hit("msg", "u", 1, window).is_ok());
-        assert!(limiter.hit("msg", "u", 1, window).is_err());
-        std::thread::sleep(Duration::from_millis(40));
-        assert!(limiter.hit("msg", "u", 1, window).is_ok());
+        let start = Instant::now();
+        assert!(limiter.hit_at("msg", "u", 1, MINUTE, start).is_ok());
+        let last = start + MINUTE - Duration::from_millis(1);
+        assert!(limiter.hit_at("msg", "u", 1, MINUTE, last).is_err());
+        assert!(
+            limiter
+                .hit_at("msg", "u", 1, MINUTE, start + MINUTE)
+                .is_ok()
+        );
     }
 
     #[test]

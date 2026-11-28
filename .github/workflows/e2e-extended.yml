@@ -1,8 +1,10 @@
 # The real app against Postgres, Redis, MinIO and the SFU: the fault matrix in
 # Chromium and Firefox, the core, media and access scenarios in Chromium, the
-# chat workflows (GEL-31) and the PWA smoke. Not a PR gate (GEL-378): it runs
+# chat workflows (GEL-31), the PWA smoke and the desktop app's tests against
+# the seeded stack (GEL-376). Not a PR gate (GEL-378): it runs
 # after pushes to a version branch that touch the app, on release and hotfix
-# pull requests to main, and by hand. A push run opens, updates or closes an issue.
+# pull requests to main, and by hand; a push starts only the jobs its paths
+# concern (scripts/e2e_jobs.py). A push run opens, updates or closes an issue.
 name: Extended E2E
 
 on:
@@ -12,9 +14,13 @@ on:
     paths:
       - 'backend/**'
       - 'web/**'
+      - 'desktop/**'
       - '.github/workflows/e2e-extended.yml'
+      - '.github/workflows/scripts/e2e_jobs.py'
+      - '.github/workflows/scripts/changes.py'
       - '.github/workflows/scripts/apt-install.sh'
       - 'deploy/compose/compose.yaml'
+      - 'rust-toolchain.toml'
   pull_request:
     branches: [main]
 
@@ -30,13 +36,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  faults:
-    name: Fault acceptance (Chromium, Firefox)
+  plan:
+    name: Which jobs run
     # Of the pull requests to main, only a release or hotfix (Dependabot's go there too).
     if: >-
       github.event_name != 'pull_request' ||
       startsWith(github.head_ref, 'release/') ||
       startsWith(github.head_ref, 'hotfix/')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      faults: ${{ steps.jobs.outputs.faults }}
+      desktop: ${{ steps.jobs.outputs.desktop }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A push starts the jobs its commits concern; anything else starts both.
+      - name: Jobs
+        id: jobs
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = push ] && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+              && git fetch --quiet --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}"; then
+            git -c core.quotePath=false diff --no-renames --name-only "$BEFORE" HEAD \
+              | python3 .github/workflows/scripts/e2e_jobs.py | tee -a "$GITHUB_OUTPUT"
+          else
+            python3 .github/workflows/scripts/e2e_jobs.py --all | tee -a "$GITHUB_OUTPUT"
+          fi
+
+  faults:
+    name: Fault acceptance (Chromium, Firefox)
+    needs: plan
+    if: needs.plan.outputs.faults == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 120
     permissions:
@@ -288,13 +325,272 @@ jobs:
             fi
           done
 
+  # The desktop app's tests against the same kind of stack, seeded like the
+  # parity scenes (desktop/live-tests.sh, GEL-376). Beside the faults, so it adds no wall time.
+  desktop-live:
+    name: Desktop app against the stack
+    needs: plan
+    if: needs.plan.outputs.desktop == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    services:
+      postgres:
+        image: postgres:19.0-alpine3.24
+        env:
+          POSTGRES_USER: gelabber
+          POSTGRES_PASSWORD: gelabber
+          POSTGRES_DB: gelabber
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gelabber -d gelabber"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:8.10.3-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://gelabber:gelabber@127.0.0.1:5432/gelabber
+      REDIS_URL: redis://127.0.0.1:6379
+      MINIO_ENDPOINT: http://127.0.0.1:9000
+      MINIO_PUBLIC_ENDPOINT: http://127.0.0.1:9000
+      MINIO_ROOT_USER: gelabber-ci
+      MINIO_ROOT_PASSWORD: gelabber-ci-test-password
+      MINIO_BUCKET: gelabber-desktop-live
+      GELABBER_LIBWEBRTC_DIR: /mnt/libwebrtc-package
+      GELABBER_TEST_SERVER: http://127.0.0.1:5180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Login to GHCR for pinned test MinIO
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start pinned MinIO
+        env:
+          MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY,,}"
+          pin="ghcr.io/${repo}/minio:${MINIO_RELEASE}"
+          grep -F "ghcr.io/${repo}/minio:${MINIO_RELEASE}" deploy/compose/compose.yaml
+          docker run -d --name gelabber-desktop-minio -p 127.0.0.1:9000:9000 \
+            -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD "$pin" server /data
+          deadline=$((SECONDS + 120))
+          until curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "MinIO did not become ready within 120s"
+              exit 1
+            fi
+            sleep 2
+          done
+
+      # The package desktop-native.yml builds and stores: its cache, else the
+      # libwebrtc-packages release, only with the SHA-256 the repository lists.
+      - name: libwebrtc package key
+        id: key
+        run: |
+          echo "key=libwebrtc-linux-x64-${{ hashFiles('desktop/native/libwebrtc.env', 'desktop/native/scripts/build-libwebrtc-linux.sh', 'desktop/native/patches/*.patch') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare package directory
+        run: sudo mkdir -p /mnt/libwebrtc-package /mnt/desktop-target && sudo chown -R "$USER" /mnt/libwebrtc-package /mnt/desktop-target
+
+      - name: Restore libwebrtc package
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /mnt/libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Fetch the stored libwebrtc package
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          set -euo pipefail
+          pin=$(grep -F "  $KEY.tar.zst" desktop/native/libwebrtc-packages.sha256 || true)
+          if [ -z "$pin" ]; then
+            echo "desktop/native/libwebrtc-packages.sha256 lists no $KEY.tar.zst: desktop-native.yml stores it after its push"
+            exit 1
+          fi
+          fetch="$RUNNER_TEMP/libwebrtc-fetch"
+          mkdir -p "$fetch"
+          gh release download libwebrtc-packages --repo "$GITHUB_REPOSITORY" --pattern "$KEY.tar.zst" --dir "$fetch"
+          (cd "$fetch" && printf '%s\n' "$pin" | sha256sum --check --strict)
+          tar --zstd -xf "$fetch/$KEY.tar.zst" -C /mnt/libwebrtc-package
+          rm -rf "$fetch"
+          test -f /mnt/libwebrtc-package/lib/libwebrtc.a
+
+      # rustfmt: mediasoup-sys formats the code it generates.
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
+        with:
+          components: rustfmt
+
+      - name: Native build tools
+        run: |
+          set -euo pipefail
+          .github/workflows/scripts/apt-install.sh build-essential python3-venv ninja-build
+          native_build_dir="${RUNNER_TEMP}/gelabber-native-build"
+          python3 backend/build/mediasoup-build-tools.py --destination "$native_build_dir"
+          python3 - "$native_build_dir" "$GITHUB_ENV" <<'PY'
+          import sys
+          from pathlib import Path
+          root = Path(sys.argv[1]).resolve()
+          values = {"PYTHON": root / "native-python", "PIP_NO_INDEX": "1",
+                    "PIP_FIND_LINKS": root / "wheelhouse", "PIP_CONSTRAINT": root / "constraints.txt",
+                    "MESON_VERSION": "1.12.0", "NINJA_VERSION": "1.13.2"}
+          with open(sys.argv[2], "a") as output:
+              output.writelines(f"{name}={value}\n" for name, value in values.items())
+          PY
+
+      - name: Build the API and the media server
+        run: cargo build --locked --manifest-path backend/Cargo.toml -p gelabber-api -p gelabber-media
+
+      - name: Build the desktop tests
+        env:
+          CARGO_TARGET_DIR: /mnt/desktop-target
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path desktop/Cargo.toml -p gelabber-client --test live --no-run
+          cargo test --locked --manifest-path desktop/Cargo.toml -p gelabber-ui --lib --no-run
+          cargo test --locked --manifest-path desktop/Cargo.toml -p gelabber-call --features media --test live --no-run
+
+      - name: Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Vite and Chromium for the call's people
+        run: |
+          set -euo pipefail
+          npm ci --prefix web
+          cd web
+          # System packages through apt-install.sh, as in the faults job (GEL-404).
+          mapfile -t deps < <(npx playwright install-deps --dry-run chromium | sed -n 's/^  \([^ ]\+\)$/\1/p')
+          if [ "${#deps[@]}" -gt 0 ]; then
+            ../.github/workflows/scripts/apt-install.sh "${deps[@]}"
+          fi
+          npx playwright install chromium
+          echo "GELABBER_PARITY_BROWSER=$(node -e 'console.log(require("playwright").chromium.executablePath())')" >> "$GITHUB_ENV"
+
+      # The parity stack (desktop/README.md "Parity"): API, media server and
+      # Vite on 5180, seeded by web/scripts/parity/seed.mjs.
+      # Its own limit: a step that times out fails, so the job's result says
+      # failure and the issue job reports it (a cancelled job reaches nobody).
+      - name: Desktop tests against the seeded stack
+        timeout-minutes: 20
+        env:
+          CARGO_TARGET_DIR: /mnt/desktop-target
+          API_ADDR: 127.0.0.1:8080
+          API_OPERATOR_EMAILS: lena@example.test
+          API_DIRECTORY: "true"
+          APP_PUBLIC_URL: http://127.0.0.1:5180
+          OIDC_GOOGLE_CLIENT_ID: parity.apps.googleusercontent.com
+          OIDC_GOOGLE_CLIENT_SECRET: parity
+          MEDIA_ADDR: 127.0.0.1:8081
+          MEDIA_ICE_BIND: 127.0.0.1:0
+          MEDIA_ADVERTISED_IP: 127.0.0.1
+          GELABBER_DEV_PUBLIC_PAGES: scripts/parity/public-pages.json
+          # The tests sign in again and again; the sign-in limit is for people.
+          API_RATE_AUTH_PER_MIN: "0"
+        run: |
+          set -euo pipefail
+          logs="$RUNNER_TEMP/desktop-live-logs"
+          mkdir -p "$logs"
+          backend/target/debug/gelabber-api >"$logs/api.log" 2>&1 &
+          api=$!
+          backend/target/debug/gelabber-media >"$logs/media.log" 2>&1 &
+          media=$!
+          (cd web && exec node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5180 --strictPort) \
+            >"$logs/vite.log" 2>&1 &
+          vite=$!
+          trap 'kill "$api" "$media" "$vite" 2>/dev/null || true' EXIT
+          deadline=$((SECONDS + 120))
+          until curl -fsS http://127.0.0.1:8080/ready >/dev/null \
+            && curl -fsS "$GELABBER_TEST_SERVER/" >/dev/null; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "API or Vite did not come up within 120s"
+              tail -n 50 "$logs"/*.log
+              exit 1
+            fi
+            sleep 2
+          done
+          (cd web && node scripts/parity/seed.mjs "$GELABBER_TEST_SERVER")
+          status=0
+          # The client's recorded fixtures still have the API's shapes (desktop/client/tests/models.rs).
+          node desktop/client/tests/record-fixtures.mjs "$GELABBER_TEST_SERVER" --check || status=1
+          desktop/live-tests.sh || status=1
+          if [ "$status" -ne 0 ]; then
+            tail -n 100 "$logs"/*.log
+            exit 1
+          fi
+
+      - name: Upload the stack's logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-live-logs
+          path: ${{ runner.temp }}/desktop-live-logs/
+          if-no-files-found: warn
+
+      - name: Stop test MinIO
+        if: always()
+        run: docker rm -f gelabber-desktop-minio || true
+
+  # The run's outcome from its jobs (scripts/e2e_jobs.py): a timed-out job
+  # fails it, a skipped one leaves it open. Read-only, so every run shows it.
+  outcome:
+    name: The run's outcome
+    needs: [plan, faults, desktop-live]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      result: ${{ steps.result.outputs.result }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Result
+        id: result
+        env:
+          PLAN: ${{ needs.plan.result }}
+          FAULTS: ${{ needs.faults.result }}
+          DESKTOP: ${{ needs.desktop-live.result }}
+        run: |
+          set -euo pipefail
+          echo "result=$(python3 .github/workflows/scripts/e2e_jobs.py result "$PLAN" "$FAULTS" "$DESKTOP")" \
+            | tee -a "$GITHUB_OUTPUT"
+
   # Who looks at a red push run: an open issue per branch, which the Linear
   # sync brings to the team; the next green push run closes it. Pull requests
   # show their result themselves, runs by hand serve debug branches.
   report:
     name: Issue for the push run's result
-    needs: faults
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch' }}
+    needs: outcome
+    if: ${{ !cancelled() && needs.outcome.result == 'success' && github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -303,7 +599,7 @@ jobs:
       - name: Open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
-          RESULT: ${{ needs.faults.result }}
+          RESULT: ${{ needs.outcome.outputs.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail

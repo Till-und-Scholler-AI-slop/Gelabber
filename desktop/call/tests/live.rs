@@ -37,8 +37,13 @@ impl People {
             .spawn()
             .expect("node call.mjs");
         let out = child.stdout.take().expect("stdout");
-        for line in BufReader::new(out).lines() {
-            let line = line.expect("call.mjs output");
+        let mut lines = BufReader::new(out).lines();
+        loop {
+            // call.mjs ending first means someone did not get into the call.
+            let line = lines
+                .next()
+                .expect("call.mjs ended before everyone was in the call")
+                .expect("call.mjs output");
             eprintln!("call.mjs: {line}");
             if line.contains("in the call") {
                 break;
@@ -81,7 +86,7 @@ fn signed_in(base: &str, email: &str, password: &str, server: Uuid) -> Client {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER) and call.mjs; GEL-376 decides where it runs"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER) and call.mjs; runs in e2e-extended.yml after merges (GEL-376)"]
 fn lena_joins_sofa_with_jonas_and_mira() {
     let base =
         std::env::var("GELABBER_TEST_SERVER").expect("GELABBER_TEST_SERVER, the seeded stack");
@@ -169,6 +174,16 @@ fn lena_joins_sofa_with_jonas_and_mira() {
     wait("unmuted for the others", Duration::from_secs(10), || {
         seat_of_lena().is_some_and(|o| !o.muted)
     });
+    call.set_deafened(true);
+    wait("deafened for the others", Duration::from_secs(10), || {
+        seat_of_lena().is_some_and(|o| o.deafened)
+    });
+    call.set_deafened(false);
+    wait(
+        "hearing again for the others",
+        Duration::from_secs(10),
+        || seat_of_lena().is_some_and(|o| !o.deafened && !o.muted),
+    );
 
     // Jonas' camera arrives as frames.
     wait("Jonas' camera", Duration::from_secs(20), || {

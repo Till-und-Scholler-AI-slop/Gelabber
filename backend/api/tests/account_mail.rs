@@ -242,8 +242,7 @@ async fn past_the_mail_limit_a_registration_changes_nothing(pool: PgPool) {
     let res = stranger.register(ADA, "another password", "Mallory").await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     assert_eq!(res.body["verification_sent"], true);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(mailer.outbox().len(), 5);
+    assert_eq!(common::settled_mails(&mailer).await.len(), 5);
 
     let res = post(
         &mut ada,
@@ -401,8 +400,7 @@ async fn an_inbox_gets_at_most_five_mails_an_hour_per_budget(pool: PgPool) {
         assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     }
     let sent = outbox(&mailer, 10).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(mailer.outbox().len(), 10);
+    assert_eq!(common::settled_mails(&mailer).await.len(), 10);
     let resets = sent
         .iter()
         .filter(|mail| mail.body.contains("/reset-password#token="))
@@ -452,8 +450,7 @@ async fn strangers_registering_an_address_leave_its_reset_mails(pool: PgPool) {
         assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     }
     outbox(&mailer, 5).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(mailer.outbox().len(), 5);
+    assert_eq!(common::settled_mails(&mailer).await.len(), 5);
 
     let res = post(
         &mut stranger,
@@ -752,8 +749,7 @@ async fn an_unconfirmed_account_gets_a_new_link_on_request(pool: PgPool) {
     // Confirmed now: a further request answers alike and sends nothing.
     let res = resend(&mut client, ADA).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(mailer.outbox().len(), 1);
+    assert_eq!(common::settled_mails(&mailer).await.len(), 1);
 }
 
 #[sqlx::test]
@@ -776,8 +772,7 @@ async fn asking_for_a_link_tells_nothing_about_an_address(pool: PgPool) {
         assert_eq!(res.status, StatusCode::ACCEPTED, "{email}: {}", res.body);
         assert_eq!(res.body, json!({}), "{email}");
     }
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(mailer.outbox().len(), 2);
+    assert_eq!(common::settled_mails(&mailer).await.len(), 2);
 
     let res = resend(&mut stranger, "not an address").await;
     assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
@@ -806,8 +801,7 @@ async fn asked_for_links_count_against_the_registration_mails(pool: PgPool) {
         assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     }
     outbox(&mailer, 5).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(mailer.outbox().len(), 5);
+    assert_eq!(common::settled_mails(&mailer).await.len(), 5);
 
     // The reset mails are a budget of their own and stay available.
     let res = post(
