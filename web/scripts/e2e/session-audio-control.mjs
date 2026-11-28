@@ -1,4 +1,4 @@
-/* global URL, setTimeout, clearTimeout */
+/* global URL, setTimeout, clearTimeout, window */
 // Complete actual scenario source; only native/UI/observation infrastructure is synthetic.
 import vm from "node:vm";
 import assert from "node:assert/strict";
@@ -7,7 +7,13 @@ import { check, CheckFailure } from "./harness.mjs";
 import * as native from "./native-evaluate.mjs";
 import * as teardown from "./teardown.mjs";
 import { activePeers } from "./media.mjs";
-function data({ sender = true, enabled = true, muted = false } = {}) {
+// The call's two audio paths: the owner's and the member's microphone.
+function data({
+  sender = true,
+  enabled = true,
+  muted = false,
+  spared = false,
+} = {}) {
   return {
     peers: [
       {
@@ -20,12 +26,12 @@ function data({ sender = true, enabled = true, muted = false } = {}) {
         ],
       },
     ],
-    playback: Array.from({ length: 3 }, () => ({
+    playback: Array.from({ length: 2 }, (_, i) => ({
       kind: "audio",
       audioTracks: 1,
       paused: false,
-      muted,
-      volume: 0.35,
+      muted: muted && !(spared && i === 0),
+      volume: 1,
     })),
     roomAudio: { perSource: [1, 1], foreign: 0 },
     watchVideoSources: { selectedLive: 1, foreign: 0 },
@@ -33,6 +39,7 @@ function data({ sender = true, enabled = true, muted = false } = {}) {
     // The watcher is in the call: one microphone capture, none for watching.
     micCalls: 1,
     playRejected: 1,
+    audioPlayStarted: 0,
   };
 }
 export async function sessionAudioControl({
@@ -40,7 +47,12 @@ export async function sessionAudioControl({
   replaceSender = false,
   replaceTrack = false,
   finalRestoreError = false,
-  otherCloseError = false,
+  retryStartsNothing = false,
+  noticeStays = false,
+  muteDoesNothing = false,
+  deafenSparesOne = false,
+  undeafenSparesOne = false,
+  volumeSparesOne = false,
   micReadyAfterPoll = false,
   micNeverConnected = false,
   micNoOutboundRtp = false,
@@ -49,12 +61,21 @@ export async function sessionAudioControl({
 } = {}) {
   const actions = [];
   let finishedVolume = false,
+    retried = false,
+    volumeSteps = 100,
     result,
     error;
+  // The only control the scenario counts is the retry, gone once clicked;
+  // the only one it presses keys on is the call volume, 1 % a step.
   const locator = {
-    click: async () => {},
-    press: async () => {},
-    count: async () => 1,
+    click: async () => {
+      retried = true;
+    },
+    press: async (key) => {
+      if (key === "Home") volumeSteps = 0;
+      if (key === "ArrowRight") volumeSteps++;
+    },
+    count: async () => (retried && !noticeStays ? 0 : 1),
     first() {
       return this;
     },
@@ -115,23 +136,14 @@ export async function sessionAudioControl({
         },
         close: async () => {},
       },
-      context: {
-        close: async () => {
-          actions.push(name + ".context.close");
-          if (name === "other" && otherCloseError)
-            throw new Error("PRIVATE-other-close-error");
-        },
-      },
+      context: { close: async () => {} },
     };
   }
   const f = {
     owner: actor("owner"),
     member: actor("member"),
     watcher: actor("watcher"),
-    join: async () => {},
-    otherPath: "/s/control/c/other",
   };
-  const other = actor("other");
   if (micReadyAfterPoll || micNeverConnected)
     f.watcher.state.peers[0].connectionState = "connecting";
   if (micNoOutboundRtp || otherPeerOnlyRtp)
@@ -178,7 +190,8 @@ export async function sessionAudioControl({
               ? "undeafen"
               : null;
       if (phase) {
-        const enabled = phase === "undeafen",
+        const enabled =
+            phase === "undeafen" || (phase === "mute" && muteDoesNothing),
           lost = lostMicAt === phase;
         f.watcher.microphone.enabled = enabled;
         if (lost) f.watcher.state.nativeSenders = [];
@@ -196,6 +209,23 @@ export async function sessionAudioControl({
           muted: phase === "deafen",
         });
       }
+      if (
+        code === "audio-click-retry-did-not-play-every-path" &&
+        !retryStartsNothing
+      )
+        f.watcher.sample.audioPlayStarted += 2;
+      if (phase === "deafen" && deafenSparesOne)
+        f.watcher.sample = data({
+          enabled: false,
+          muted: true,
+          spared: true,
+        });
+      if (phase === "undeafen" && undeafenSparesOne)
+        f.watcher.sample.playback[0].muted = true;
+      if (code === "session-volume-not-applied-to-every-path")
+        f.watcher.sample.playback.forEach((path, i) => {
+          path.volume = volumeSparesOne && i === 0 ? 1 : volumeSteps / 100;
+        });
       const sample = await probe();
       check(accept(sample), code, { last: sample });
       if (code === "session-volume-not-applied-to-every-path")
@@ -210,6 +240,9 @@ export async function sessionAudioControl({
     "./media.mjs": {
       watchSource: async () => {},
       activePeers,
+      armPlaybackRetry: function armPlaybackRetry() {
+        window.__e2e.retryArmed = true;
+      },
       progress: async () => ({ syntheticPositiveFixture: true }),
     },
   };
@@ -232,7 +265,6 @@ export async function sessionAudioControl({
   });
   await source.evaluate();
   const h = {
-    actor: async () => other,
     run: async (id, _predecessors, task) => {
       if (id === "session-audio-mute-deafen-volume-playback-retry") {
         try {
@@ -252,6 +284,7 @@ export async function sessionAudioControl({
     result,
     error,
     actions,
+    watcherState: f.watcher.state,
     watcherSenderStatsCalls: f.watcher.senderStatsCalls,
   };
 }

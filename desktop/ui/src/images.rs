@@ -459,6 +459,21 @@ impl Images {
         }
     }
 
+    /// When the picture at `url` last failed to load, if it did.
+    #[cfg(test)]
+    pub(crate) fn failed_at(&self, url: &str) -> Option<Instant> {
+        self.cache
+            .lock()
+            .entries
+            .iter()
+            .filter(|((u, _), _)| u == url)
+            .filter_map(|(_, entry)| match entry.kind {
+                Kind::Failed { at, .. } => Some(at),
+                _ => None,
+            })
+            .max()
+    }
+
     /// Bytes of decoded pictures held now.
     #[cfg(test)]
     fn held(&self) -> usize {
@@ -956,7 +971,8 @@ pub(crate) mod tests {
         mut draw: impl FnMut(&egui::Context) -> T,
         done: impl Fn(&T) -> bool,
     ) -> T {
-        for _ in 0..500 {
+        let mut settled = None;
+        crate::app::testkit::eventually("the picture to settle", || {
             let mut out = None;
             let input = egui::RawInput {
                 max_texture_side: Some(max_side),
@@ -966,12 +982,11 @@ pub(crate) mod tests {
             // No painter takes the uploads here.
             output.textures_delta.clear();
             let out = out.expect("drawn");
-            if done(&out) {
-                return out;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        panic!("did not settle");
+            let done = done(&out);
+            settled = Some(out);
+            done
+        });
+        settled.expect("drawn")
     }
 
     #[test]

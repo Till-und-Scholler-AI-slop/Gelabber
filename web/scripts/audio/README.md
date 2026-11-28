@@ -95,7 +95,8 @@ the same as Standard's.
 Node with the checked-in files: output sample for sample against DFN3
 alone, the gate's shifted speech probability, and each fallback.
 
-Run `npm run test:audio-dsp` to process deterministic synthetic noise, measure
+`npm run test:checks` runs this benchmark on every pull request that touches
+`web/`. Run `npm run test:audio-dsp` to process deterministic synthetic noise, measure
 compute time per 10 ms frame, and compare the actual worklet sample-for-sample
 with direct RNNoise across varying browser render quanta, with the input
 sensitivity gate off (GEL-27; on, it adds a 20 ms look-ahead, covered by
@@ -117,7 +118,9 @@ The report keeps frame compute time separate. The PCM measurement includes no
 browser capture/output buffering, scheduling overruns, codec, network or
 physical-device latency; those remain release acceptance gates.
 
-Start `npm run dev -- --host 127.0.0.1 --port 5179`, then run
+`e2e-extended.yml` runs this smoke after merge (`npm run test:e2e-server`); its
+Firefox run is an expected failure under GEL-417. By hand, start
+`npm run dev -- --host 127.0.0.1 --port 5179`, then run
 `npm run test:audio-smoke`. Chromium and Firefox use browser fake devices, genuine
 AudioWorklet/WASM, real MediaRecorder and HTML audio playback. The local test
 checks Enhanced speech, Strong (DFN3 reports its time per block; a missing
