@@ -434,20 +434,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           KEY: ${{ steps.key.outputs.key }}
-        run: |
-          set -euo pipefail
-          pin=$(grep -F "  $KEY.tar.zst" desktop/native/libwebrtc-packages.sha256 || true)
-          if [ -z "$pin" ]; then
-            echo "desktop/native/libwebrtc-packages.sha256 lists no $KEY.tar.zst: desktop-native.yml stores it after its push"
-            exit 1
-          fi
-          fetch="$RUNNER_TEMP/libwebrtc-fetch"
-          mkdir -p "$fetch"
-          gh release download libwebrtc-packages --repo "$GITHUB_REPOSITORY" --pattern "$KEY.tar.zst" --dir "$fetch"
-          (cd "$fetch" && printf '%s\n' "$pin" | sha256sum --check --strict)
-          tar --zstd -xf "$fetch/$KEY.tar.zst" -C /mnt/libwebrtc-package
-          rm -rf "$fetch"
-          test -f /mnt/libwebrtc-package/lib/libwebrtc.a
+        run: desktop/native/scripts/libwebrtc-fetch.sh "$KEY" /mnt/libwebrtc-package
 
       # rustfmt: mediasoup-sys formats the code it generates.
       - name: Rust toolchain
