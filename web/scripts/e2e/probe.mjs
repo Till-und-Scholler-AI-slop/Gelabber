@@ -938,12 +938,15 @@ export async function sample({ deadlineEpochMs } = {}) {
     ).length,
     rejectedSdp: state.rejectedSdp,
     rejectedSdpErrors: state.rejectedSdpErrors?.slice() ?? [],
+    // Over every connection that received RTP for the track, not one
+    // connection a scenario picked: a pick made before the receiving
+    // connection was up took the send connection, which receives nothing
+    // (GEL-466). A second live path for one source counts twice.
     roomAudio: (() => {
       const incoming = [
         ...new Map(state.incomingTracks.map((t) => [t.track, t])).values(),
       ].filter(
         (t) =>
-          t.pc === state.expectedAudioPeer &&
           t.pc.connectionState !== "closed" &&
           t.track.kind === "audio" &&
           t.track.readyState === "live" &&
@@ -964,7 +967,6 @@ export async function sample({ deadlineEpochMs } = {}) {
         ...new Map(state.incomingTracks.map((t) => [t.track, t])).values(),
       ].filter(
         (t) =>
-          t.pc === state.expectedAudioPeer &&
           t.pc.connectionState !== "closed" &&
           t.track.kind === "video" &&
           t.track.readyState === "live" &&
