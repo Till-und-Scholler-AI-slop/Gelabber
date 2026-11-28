@@ -6,6 +6,10 @@
 # flaky test in the job summary and record it in its issue.
 [profile.ci]
 retries = 1
+# A hung test ends after 2 minutes with its name in the log and a JUnit
+# report (GEL-369). The slowest passes in about 7 s on CI (6.3, 7.3 and
+# 6.4 s in three green runs); the test kit gives up a wait after 15 s.
+slow-timeout = { period = "30s", terminate-after = 4 }
 
 [profile.ci.junit]
 path = "junit.xml"

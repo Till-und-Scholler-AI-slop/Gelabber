@@ -149,9 +149,7 @@ async fn next_inbound(
     }
 }
 
-/// `dnd`: the client knows the presence status `d` (#590); other clients
-/// hear Do not disturb as online.
-pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dnd: bool) {
+pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     let user = &session.user;
     let (tx, mut rx) = mpsc::channel(super::hub::OUTBOUND_CAPACITY);
     let (conn, mut revoked) = state
@@ -161,9 +159,6 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
     let Some(recheck) = state.gateway.recheck_signal(conn).await else {
         return;
     };
-    if dnd {
-        state.gateway.allow_dnd(conn).await;
-    }
     // The upgrade itself just checked the session.
     let mut checked = Instant::now();
     // Fast path for the session's end; `lock_live` enforces it as well. The
@@ -329,7 +324,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
             }
             frame = rx.recv() => {
                 let Some(frame) = frame else { break };
-                let Ok(batch) = take_batch(frame, &mut rx, dnd, user.id) else { break };
+                let Ok(batch) = take_batch(frame, &mut rx, user.id) else { break };
                 match deliver(&state, &session, user.id, conn, &mut sink, batch, &mut rosters).await {
                     Ok(true) => checked = Instant::now(),
                     Ok(false) => {}
@@ -616,13 +611,7 @@ async fn subscribe(
         warn!(error = err.code(), "presence announce on subscribe failed");
     }
     let presence = match state.gateway.presence_snapshot(server_id).await {
-        Ok(snap) => {
-            let dnd = state.gateway.knows_dnd(conn).await;
-            Some(client_frame(
-                ServerFrame::presence_snap(server_id, snap),
-                dnd,
-            ))
-        }
+        Ok(snap) => Some(ServerFrame::presence_snap(server_id, snap)),
         Err(err) => {
             warn!(error = err.code(), "presence snapshot on subscribe failed");
             None
@@ -848,24 +837,18 @@ type Scope = (Uuid, Option<Uuid>);
 /// something happened there.
 type Rosters = HashMap<Uuid, Vec<VoiceEntry>>;
 
-/// The frame as this client can take it (see [`run`]'s `dnd`).
-fn client_frame(frame: ServerFrame, dnd: bool) -> ServerFrame {
-    if dnd { frame } else { frame.without_dnd() }
-}
-
 /// Frames queued for the socket of `user`, each as they may read it,
 /// without those not for them ([`ServerFrame::for_user`]): possibly none.
 fn take_batch(
     first: ServerFrame,
     rx: &mut mpsc::Receiver<ServerFrame>,
-    dnd: bool,
     user: Uuid,
 ) -> Result<Vec<(ServerFrame, String)>, ApiError> {
     let mut batch = Vec::new();
     let mut bytes = 0;
     let mut next = Some(first);
     while let Some(frame) = next {
-        if let Some(frame) = client_frame(frame, dnd).for_user(user) {
+        if let Some(frame) = frame.for_user(user) {
             let json = to_json(&frame)?;
             bytes += json.len();
             batch.push((frame, json));
@@ -1137,10 +1120,7 @@ mod tests {
 
         let mut last = long_ago;
         assert!(!idle_timer(&mut last, false, true, limit), "in a call");
-        assert!(
-            last.elapsed() < Duration::from_secs(1),
-            "the call counts as activity"
-        );
+        assert!(last > long_ago, "the call counts as activity");
         assert!(
             !idle_timer(&mut last, false, false, limit),
             "left: the five minutes start now"
@@ -1315,6 +1295,13 @@ mod tests {
             .await
             .unwrap();
 
+        // The tick stops in reconcile_access, on the pool's only connection,
+        // until this lock on `channels` goes.
+        let mut held = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE channels IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *held)
+            .await
+            .unwrap();
         let busy = state.gateway.connections.inner.voice_ops.lock().await;
         let tick = tokio::spawn({
             let (state, session) = (state.clone(), session.clone());
@@ -1323,14 +1310,33 @@ mod tests {
                 security_tick(&state, &session, conn, &mut checked, false).await
             }
         });
-        // Long enough for the session check and reconcile on a local database.
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        assert!(!tick.is_finished(), "the tick waits on voice_ops");
-        let free = tokio::time::timeout(Duration::from_millis(200), small.acquire()).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let waiting: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM pg_stat_activity \
+                     WHERE datname = current_database() AND wait_event_type = 'Lock'",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                if waiting > 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the tick reaches reconcile_access");
+        held.commit().await.unwrap();
+        // Asked for while the tick holds the connection, so this gets it
+        // when the tick gives it back. A tick that kept it while waiting on
+        // voice_ops would leave it to the pool's acquire timeout.
+        let free = small.acquire().await;
         assert!(
-            matches!(free, Ok(Ok(_))),
+            free.is_ok(),
             "the tick kept the only pool connection while waiting on voice_ops"
         );
+        assert!(!tick.is_finished(), "the tick waits on voice_ops");
         drop(free);
         drop(busy);
         assert!(

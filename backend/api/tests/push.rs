@@ -131,9 +131,23 @@ impl Browser {
         json!({"endpoint": self.endpoint, "keys": {"p256dh": self.public, "auth": self.auth}})
     }
 
-    fn open(&self, hit: &Hit) -> Value {
+    /// The push message as it arrives, declared notification and all.
+    fn message(&self, hit: &Hit) -> Value {
         let plain = decrypt(&self.private, &self.auth, &hit.body).expect("decrypts");
         serde_json::from_slice(&plain).unwrap()
+    }
+
+    /// What the service worker reads of it (`pushed` in `web/public/sw.js`):
+    /// the declared notification's `data`, with its `title` and `body`.
+    fn open(&self, hit: &Hit) -> Value {
+        let message = self.message(hit);
+        assert_eq!(message["web_push"], 8030, "{message}");
+        let declared = &message["notification"];
+        let mut read = declared["data"].clone();
+        assert!(read.is_object(), "{message}");
+        read["title"] = declared["title"].clone();
+        read["body"] = declared["body"].clone();
+        read
     }
 }
 
@@ -415,7 +429,7 @@ async fn a_push_declares_its_notification(pool: PgPool) {
     let bob = b.user_id().to_owned();
     let message = post(&mut a, &dm, "hallo").await;
     let id = message["id"].as_str().unwrap();
-    let payload = browser.open(&next(&mut hits).await);
+    let payload = browser.message(&next(&mut hits).await);
     // A declarative push message: a browser that knows them shows this
     // without the worker's help.
     assert_eq!(payload["web_push"], 8030);
@@ -440,18 +454,13 @@ async fn a_push_declares_its_notification(pool: PgPool) {
             },
         })
     );
-    // And what a worker from before v0.12 reads.
-    assert_eq!(payload["title"], "Ada");
-    assert_eq!(payload["body"], "hallo");
-    assert_eq!(payload["path"], format!("/d/{dm}"));
-    assert_eq!(payload["message"], id);
 
     // A recall replaces it without a sound.
     let r = a
         .send(Method::DELETE, &format!("/api/messages/{id}"), None)
         .await;
     assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
-    let recalled = browser.open(&next(&mut hits).await);
+    let recalled = browser.message(&next(&mut hits).await);
     let declared = &recalled["notification"];
     assert_eq!(declared["body"], "Nachricht gelöscht");
     assert_eq!(declared["tag"], format!("gelabber:{bob}:{dm}"));
@@ -475,7 +484,7 @@ async fn a_declared_notification_leads_to_the_public_address(pool: PgPool) {
     let browser = Browser::new(&service, "sub/bob");
     subscribe(&mut b, &browser).await;
     post(&mut a, &channel, "plain").await;
-    let payload = browser.open(&next(&mut hits).await);
+    let payload = browser.message(&next(&mut hits).await);
     assert_eq!(
         payload["notification"]["navigate"],
         format!("https://chat.test.example/s/{server}/c/{channel}")
@@ -741,6 +750,7 @@ async fn a_long_failing_subscription_is_removed(pool: PgPool) {
 #[sqlx::test]
 async fn a_message_no_service_took_costs_no_subscription(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         dm,
@@ -762,8 +772,7 @@ async fn a_message_no_service_took_costs_no_subscription(pool: PgPool) {
     for _ in 0..3 {
         next(&mut hits).await;
     }
-    // The gone one going shows the cleanup ran.
-    let left = endpoints_settled(&pool, 2).await;
+    let left = endpoints_settled(&state, &pool).await;
     assert_eq!(left.len(), 2, "{left:?}");
     assert!(left[0].ends_with("/big/old"), "{left:?}");
     assert!(left[1].ends_with("/fail/old"), "{left:?}");
@@ -786,12 +795,14 @@ async fn endpoints_left(pool: &PgPool, expected: usize) -> Vec<String> {
     left
 }
 
-/// Like [`endpoints_left`], then a moment more: the gone row is deleted
-/// before the failed ones, so reaching `expected` alone proves nothing.
-async fn endpoints_settled(pool: &PgPool, expected: usize) -> Vec<String> {
-    endpoints_left(pool, expected).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    endpoints_left(pool, expected).await
+/// The endpoints left once every push decided so far is done ([`settled`]):
+/// a delivery deletes the gone and failed rows before it ends.
+async fn endpoints_settled(state: &AppState, pool: &PgPool) -> Vec<String> {
+    settled(state).await;
+    sqlx::query_scalar::<_, String>("SELECT endpoint FROM push_subscriptions ORDER BY endpoint")
+        .fetch_all(pool)
+        .await
+        .unwrap()
 }
 
 /// A service that refuses a subscription (400, 403 after a key change)
@@ -827,6 +838,7 @@ async fn a_refused_subscription_is_removed_at_once(pool: PgPool) {
 #[sqlx::test]
 async fn a_refusal_of_every_push_keeps_the_subscriptions(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         dm,
@@ -848,8 +860,8 @@ async fn a_refusal_of_every_push_keeps_the_subscriptions(pool: PgPool) {
     for _ in 0..3 {
         next(&mut hits).await;
     }
-    // The gone one going shows the cleanup ran; both refused ones stay.
-    let left = endpoints_settled(&pool, 2).await;
+    // The gone one goes; both refused ones stay.
+    let left = endpoints_settled(&state, &pool).await;
     assert_eq!(left.len(), 2, "{left:?}");
     assert!(left[0].ends_with("/denied/new"), "{left:?}");
     assert!(left[1].ends_with("/denied/old"), "{left:?}");
@@ -1062,6 +1074,7 @@ async fn receipts_are(pool: &PgPool, message: &str, expected: i64) {
 #[sqlx::test]
 async fn a_deleted_message_recalls_its_push(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         dm,
@@ -1114,8 +1127,8 @@ async fn a_deleted_message_recalls_its_push(pool: PgPool) {
         .send(Method::DELETE, &format!("/api/messages/{old}"), None)
         .await;
     assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
-    let late = tokio::time::timeout(Duration::from_millis(300), hits.recv()).await;
-    assert!(late.is_err(), "no recall past the TTL");
+    settled(&state).await;
+    assert!(hits.try_recv().is_err(), "no recall past the TTL");
 }
 
 #[sqlx::test]
@@ -1368,12 +1381,8 @@ async fn nothing_pushes_from_someone_blocked(pool: PgPool) {
     post(&mut c, &channel, &format!("<@{bob}> marker")).await;
     let payload = browser.open(&next(&mut hits).await);
     assert_eq!(payload["body"], "@Bob marker");
-    assert!(
-        tokio::time::timeout(Duration::from_millis(500), hits.recv())
-            .await
-            .is_err(),
-        "nothing from Ada"
-    );
+    settled(&state).await;
+    assert!(hits.try_recv().is_err(), "nothing from Ada");
 }
 
 /// Do not disturb (#590) holds back every push, DMs and mentions alike,
@@ -1626,7 +1635,7 @@ async fn a_session_about_to_end_says_so_once(pool: PgPool) {
         "Du warst länger nicht hier. Öffne Gelabber, damit Benachrichtigungen auf diesem Gerät weiter ankommen."
     );
     assert_eq!(payload["path"], "/");
-    assert_eq!(payload["notification"]["navigate"], "/");
+    assert_eq!(bob_browser.message(&hit)["notification"]["navigate"], "/");
     // A notification of its own: no conversation's tag.
     assert_eq!(payload["channel"], Uuid::nil().to_string());
     assert_eq!(payload.get("recall"), None);
@@ -1680,13 +1689,14 @@ async fn at_the_end_of_its_life_a_session_asks_for_a_new_sign_in(pool: PgPool) {
     .unwrap();
 
     assert_eq!(sweep(&state).await.unwrap(), 1);
-    let payload = bob_browser.open(&next(&mut hits).await);
+    let hit = next(&mut hits).await;
+    let payload = bob_browser.open(&hit);
     assert_eq!(payload["title"], "Notifications are about to stop");
     assert_eq!(
         payload["body"],
         "The sign-in on this device ends soon. Sign in again to keep notifications coming."
     );
-    assert_eq!(payload["notification"]["lang"], "en");
+    assert_eq!(bob_browser.message(&hit)["notification"]["lang"], "en");
 
     // Using the app renews nothing now, and brings no second notice.
     let r = b.send(Method::GET, "/api/auth/session", None).await;

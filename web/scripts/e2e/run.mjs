@@ -1,4 +1,4 @@
-/* global process */
+/* global process, console */
 import { startHarness } from "./harness.mjs";
 import { mediaScenarios } from "./media.mjs";
 import { profiles } from "./profiles.mjs";
@@ -13,6 +13,11 @@ if (process.env.GELABBER_E2E_PROFILE) {
     throw new Error("unknown or conflicting E2E profile");
   process.env.GELABBER_E2E_SUITE = profile.suite;
   process.env.GELABBER_E2E_CASES = profile.cases.join(",");
+  process.env.GELABBER_E2E_EXPECTED_FAILURES = JSON.stringify(
+    profile.expectedFailures ?? {},
+  );
+  for (const [id, reason] of Object.entries(profile.leftOut ?? {}))
+    console.log(`LEFT OUT ${id} (${reason})`);
 }
 const suite = process.env.GELABBER_E2E_SUITE ?? "all";
 if (!["all", "media", "core", "access"].includes(suite))
@@ -27,12 +32,15 @@ if (activeFaultRuntime)
     dedicatedDatabaseAndBucket: true,
     replayWindow: 8,
     fixtureRateLimitsDisabled: true,
+    // PID of an API an earlier runner left behind, ended at start (GEL-457).
+    leftoverRemoved: activeFaultRuntime.leftoverRemoved ?? null,
     media: activeFaultRuntime.media
       ? {
           sourceSha: activeFaultRuntime.media.manifest.sourceSha,
           binarySha256: activeFaultRuntime.media.manifest.sha256,
           authorityViaOwnedRedisProxy: true,
           iceAdapter: activeFaultRuntime.media.iceAdapter,
+          leftoverRemoved: activeFaultRuntime.media.leftoverRemoved ?? null,
         }
       : null,
   };
@@ -47,6 +55,7 @@ try {
       registration: "UI",
       invitation: "UI",
       services: "real API/Gateway; SFU joined only in media/access scenarios",
+      steps: f.steps,
     };
   });
   if (setup.status === "PASS") {

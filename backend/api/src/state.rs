@@ -113,6 +113,9 @@ pub struct AppState {
     /// Which background workers `app()` starts and how often each looks for
     /// work on its own.
     pub workers: Workers,
+    /// Which of those workers have finished a pass, for the start-up check
+    /// in `tests/workers.rs` (GEL-434).
+    pub worker_passes: Arc<WorkerPasses>,
 }
 
 /// The background workers `app()` starts, each with the interval at which it
@@ -176,6 +179,49 @@ impl Default for Workers {
             last_call: Some(crate::push::last_call::SWEEP_EVERY),
             feedback_sweep: Some(crate::feedback::public::SWEEP_EVERY),
         }
+    }
+}
+
+/// A background worker's loop, as [`WorkerPasses`] records it. Storage
+/// cleanup runs two; link previews count their sweep (their jobs wait for a
+/// message, not a timer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Worker {
+    Delivery,
+    StorageDeletes,
+    UploadExpiry,
+    Pictures,
+    AccountPurge,
+    AccountExport,
+    PreviewSweep,
+    PresenceModes,
+    LastCall,
+    FeedbackSweep,
+}
+
+/// The background workers that finished a pass in this process; a pass
+/// counts once its work ran without an error. `tests/workers.rs` waits on it
+/// to check that a server starts every worker (GEL-434). After a worker's
+/// first pass, its later ones change nothing and wake nobody.
+#[derive(Debug)]
+pub struct WorkerPasses(tokio::sync::watch::Sender<HashSet<Worker>>);
+
+impl Default for WorkerPasses {
+    fn default() -> Self {
+        Self(tokio::sync::watch::Sender::new(HashSet::new()))
+    }
+}
+
+impl WorkerPasses {
+    pub(crate) fn finished(&self, worker: Worker) {
+        self.0.send_if_modified(|passed| passed.insert(worker));
+    }
+
+    /// Returns once `worker` has finished a pass.
+    pub async fn first(&self, worker: Worker) {
+        let mut passed = self.0.subscribe();
+        // The sender lives as long as `self`, so the wait cannot fail.
+        let _ = passed.wait_for(|passed| passed.contains(&worker)).await;
     }
 }
 
@@ -326,6 +372,7 @@ impl AppState {
             media_demand: crate::media::MEDIA_DEMAND,
             server_lock_wait: crate::servers::membership::SERVER_LOCK_WAIT,
             workers: Workers::default(),
+            worker_passes: Arc::default(),
         })
     }
 

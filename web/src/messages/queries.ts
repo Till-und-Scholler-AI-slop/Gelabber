@@ -37,7 +37,6 @@ import {
   applyMessageChanges,
   combineMessageChange,
   encodeCursor,
-  newerMessage,
   olderCursor,
   refreshReplies,
   stampOlder,
@@ -68,14 +67,8 @@ import type {
   MessageAuthor,
   MessagePage,
 } from "./types.ts";
-import {
-  asAttachmentList,
-  asMentionList,
-  asPreviewList,
-  asReactionList,
-  asReply,
-  replyTo,
-} from "./types.ts";
+import { isMessage, reportMalformed } from "../api/wire.ts";
+import { asPreviewList, asReply, replyTo } from "./types.ts";
 
 export const messageKeys = {
   channel: (userId: string, generation: number, channelId: string) =>
@@ -824,32 +817,25 @@ export function editMessageOptions(client: QueryClient, channelId: string) {
       const versionMatches =
         rowVersion(client, ctx.userId, ctx.generation, channelId, ctx.id) ===
         ctx.version;
-      // Legacy replies cannot order themselves against a newer mutation/event.
-      if (message.revision === undefined && !versionMatches) return;
       const current = client
         .getQueryData<Cache>(
           messageKeys.channel(ctx.userId, ctx.generation, channelId),
         )
         ?.pages.flatMap((page) => page.messages)
         .find((row) => row.id === ctx.id);
-      if (message.revision === undefined && !current) return;
       const ownsOptimistic =
         versionMatches &&
         current !== undefined &&
         current.content === ctx.optimistic?.content &&
         current.edited_at === ctx.optimistic.edited_at;
-      // REST may replace the optimistic row with either an older or newer
-      // snapshot. Compare canonical values, never the local optimistic clock.
-      const canonical =
-        message.revision === undefined && current && !ownsOptimistic
-          ? newerMessage(current, message)
-          : message;
+      // The answer carries its revision (the server always sends one), which
+      // orders it against a newer edit or event that arrived meanwhile.
       const change = recordChange(
         client,
         ctx.userId,
         ctx.generation,
         channelId,
-        { id: message.id, message: canonical, created: false },
+        { id: message.id, message, created: false },
       );
       patchPages(client, ctx.userId, ctx.generation, channelId, (pages) =>
         ownsOptimistic
@@ -905,20 +891,6 @@ export function useEditMessage(channelId: string) {
         void refreshChatWorkflows(client, stamp, channelId);
     },
   });
-}
-
-function isMessage(value: unknown): value is Message {
-  if (value === null || typeof value !== "object") return false;
-  const row = value as Message;
-  return (
-    typeof row.id === "string" &&
-    typeof row.channel_id === "string" &&
-    typeof row.content === "string" &&
-    typeof row.created_at === "string" &&
-    row.author !== null &&
-    typeof row.author === "object" &&
-    typeof row.author.id === "string"
-  );
 }
 
 /** WS create: append if the row is not already in a page. */
@@ -1074,24 +1046,24 @@ export function applyChannelEvent(
     );
     return;
   }
-  if ((event.t === "c" || event.t === "e") && isMessage(event.d)) {
-    const message = {
-      ...event.d,
-      ...(event.r !== undefined ? { revision: event.r } : {}),
-      attachments: asAttachmentList(event.d.attachments),
-      mentions: asMentionList(event.d.mentions),
-      mention_everyone: event.d.mention_everyone === true,
-      reactions: asReactionList(event.d.reactions),
-      ...(event.d.reply === undefined ? {} : { reply: asReply(event.d.reply) }),
-      ...(event.d.previews === undefined
-        ? {}
-        : { previews: asPreviewList(event.d.previews) }),
-    };
-    if (event.t === "c") {
-      applyMessageCreated(client, userId, generation, channelId, message);
-      confirmEcho(channelId, userId, message);
-    } else applyMessageEdited(client, userId, generation, channelId, message);
+  if (event.t !== "c" && event.t !== "e") return;
+  // A channel's creates and edits carry the whole message.
+  if (!isMessage(event.d)) {
+    reportMalformed("message event", event.d);
+    return;
   }
+  const message = {
+    ...event.d,
+    ...(event.r !== undefined ? { revision: event.r } : {}),
+    ...(event.d.reply === undefined ? {} : { reply: asReply(event.d.reply) }),
+    ...(event.d.previews === undefined
+      ? {}
+      : { previews: asPreviewList(event.d.previews) }),
+  };
+  if (event.t === "c") {
+    applyMessageCreated(client, userId, generation, channelId, message);
+    confirmEcho(channelId, userId, message);
+  } else applyMessageEdited(client, userId, generation, channelId, message);
 }
 
 type DeleteContext = import("../auth/scope.ts").ScopeStamp & {

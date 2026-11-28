@@ -716,6 +716,7 @@ fn request_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::testkit::{click_last, click_role, wait_until_idle};
 
     fn languages() -> Vec<DirectoryLanguage> {
         serde_json::from_value(serde_json::json!([
@@ -867,35 +868,28 @@ mod tests {
         format!("/s/{HOME}/settings")
     }
 
-    fn steps(harness: &mut Harness, n: usize) {
-        for _ in 0..n {
-            harness.step();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-    }
-
     /// To the section, as the scene does: a row out of view takes no click.
-    /// Only once `loaded` (the form's and the queue's labels) are in: a
-    /// jump while they load stops at the end of the shorter page, and the
-    /// form that comes in then puts Speichern under the window's edge.
-    fn open_section(harness: &mut Harness, loaded: &[&str]) {
-        wait_for(harness, "the Verzeichnis section loaded", |h| {
-            h.query_by_role_and_label(Role::Link, "Verzeichnis")
-                .is_some()
-                && loaded.iter().all(|label| h.query_by_label(label).is_some())
-        });
-        harness
-            .get_by_role_and_label(Role::Link, "Verzeichnis")
-            .click();
-        steps(harness, 30);
+    /// The click waits for the page's loads: a jump while they load stops
+    /// at the end of the shorter page, and the form that comes in then puts
+    /// Speichern under the window's edge (GEL-71).
+    fn open_section(harness: &mut Harness) {
+        click_role(harness, Role::Link, "Verzeichnis");
+        wait_until_idle(harness);
     }
 
     /// Verzeichnis' Speichern: the last one, after Allgemein's.
-    fn save<'a>(harness: &'a egui_kittest::Harness<'_, crate::Launcher>) -> egui_kittest::Node<'a> {
+    fn save_button<'a>(
+        harness: &'a egui_kittest::Harness<'_, crate::Launcher>,
+    ) -> egui_kittest::Node<'a> {
         harness
             .query_all_by_role_and_label(Role::Button, "Speichern")
             .last()
             .expect("Speichern")
+    }
+
+    /// Clicks Verzeichnis' Speichern.
+    fn save(harness: &mut egui_kittest::Harness<'_, crate::Launcher>) {
+        click_last(harness, Role::Button, "Speichern");
     }
 
     fn sent_to(sent: &Sent, line: &str) -> Option<String> {
@@ -915,24 +909,20 @@ mod tests {
         let api = api(stand, Arc::clone(&sent));
         let mut harness = launcher(&api, &route());
         harness.set_size(egui::vec2(1280.0, 1400.0));
-        open_section(&mut harness, &["Im Verzeichnis zeigen", "Annehmen"]);
+        open_section(&mut harness);
         // The preview's button is drawn but takes no click, and screen
         // readers skip it (`inert`).
         let preview = harness.get_by_role_and_label(Role::Button, "Beitritt anfragen");
         assert!(preview.accesskit_node().is_disabled());
         assert!(preview.accesskit_node().is_hidden());
-        assert!(save(&harness).accesskit_node().is_disabled());
-        harness
-            .get_by_role_and_label(Role::Switch, "Im Verzeichnis zeigen")
-            .click();
-        steps(&mut harness, 4);
-        harness
-            .get_by_role_and_label(Role::RadioButton, "Offen")
-            .click();
-        steps(&mut harness, 4);
+        assert!(save_button(&harness).accesskit_node().is_disabled());
+        click_role(&mut harness, Role::Switch, "Im Verzeichnis zeigen");
+        wait_until_idle(&mut harness);
+        click_role(&mut harness, Role::RadioButton, "Offen");
+        wait_until_idle(&mut harness);
         // An open server offers Beitreten in the preview.
         harness.get_by_role_and_label(Role::Button, "Beitreten");
-        save(&harness).click();
+        save(&mut harness);
         let put = format!("PUT /servers/{HOME}/listing");
         wait_for(&mut harness, "the save", |_| api.saw(&put));
         let body: Value = serde_json::from_str(&sent_to(&sent, &put).unwrap()).unwrap();
@@ -943,7 +933,7 @@ mod tests {
         );
         // Saved: the form follows the answer, Speichern waits again.
         wait_for(&mut harness, "the saved form", |h| {
-            save(h).accesskit_node().is_disabled()
+            save_button(h).accesskit_node().is_disabled()
         });
     }
 
@@ -955,15 +945,13 @@ mod tests {
         let api = api(owner(settings(false, "", Value::Null, true)), sent);
         let mut harness = launcher(&api, &route());
         harness.set_size(egui::vec2(1280.0, 1400.0));
-        open_section(&mut harness, &["Im Verzeichnis zeigen", "Annehmen"]);
+        open_section(&mut harness);
         // The operator took it out: the note says so.
         harness.get_by_label("Der Betreiber hat diesen Server aus dem Verzeichnis genommen.");
-        harness
-            .get_by_role_and_label(Role::Switch, "Im Verzeichnis zeigen")
-            .click();
-        steps(&mut harness, 4);
-        save(&harness).click();
-        steps(&mut harness, 10);
+        click_role(&mut harness, Role::Switch, "Im Verzeichnis zeigen");
+        wait_until_idle(&mut harness);
+        save(&mut harness);
+        wait_until_idle(&mut harness);
         assert!(!api.saw(&format!("PUT /servers/{HOME}/listing")));
         let described = |label: &str, text: &str| {
             harness.query_all_by_label(label).any(|n| {
@@ -993,7 +981,7 @@ mod tests {
         };
         let api = api(stand, Arc::clone(&sent));
         let mut harness = launcher(&api, &route());
-        open_section(&mut harness, &["Annehmen"]);
+        open_section(&mut harness);
         let link = harness.get_by_role_and_label(Role::Link, "Verzeichnis");
         assert_eq!(
             link.accesskit_node().description().as_deref(),
@@ -1001,9 +989,7 @@ mod tests {
         );
         assert!(harness.query_by_label("Im Verzeichnis zeigen").is_none());
         assert!(!api.saw(&format!("GET /servers/{HOME}/listing")));
-        harness
-            .get_by_role_and_label(Role::Button, "Annehmen")
-            .click();
+        click_role(&mut harness, Role::Button, "Annehmen");
         let accept = format!("POST /servers/{HOME}/join-requests/{KAI}/accept");
         wait_for(&mut harness, "the answer", |_| api.saw(&accept));
         wait_for(&mut harness, "the row to go", |h| {
@@ -1036,7 +1022,7 @@ mod tests {
                     .is_some()
             });
             wait_for(&mut harness, "the status", |_| api.saw("GET /directory"));
-            steps(&mut harness, 10);
+            wait_until_idle(&mut harness);
             assert!(
                 harness
                     .query_by_role_and_label(Role::Link, "Verzeichnis")

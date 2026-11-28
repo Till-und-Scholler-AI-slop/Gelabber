@@ -1410,6 +1410,7 @@ fn danger(ui: &mut Ui, _app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::testkit::{click, click_node, click_now, click_role, id_of};
 
     #[test]
     fn invite_expiry_words_in_english() {
@@ -1568,10 +1569,7 @@ mod tests {
         );
         let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
         wait_for_label(&mut harness, "Aktionen für Jonas");
-        harness.run_steps(10);
-        harness
-            .get_by_role_and_label(A11y::Link, "Gefahrenzone")
-            .click();
+        click_role(&mut harness, A11y::Link, "Gefahrenzone");
         harness.run_steps(2);
         let delete = |h: &egui_kittest::Harness<'_, crate::setup::Launcher>| {
             h.get_by_role_and_label(A11y::Button, "Server löschen")
@@ -1592,9 +1590,7 @@ mod tests {
             "{landed:?}"
         );
 
-        harness
-            .get_by_role_and_label(A11y::Link, "Allgemein")
-            .click();
+        click_role(&mut harness, A11y::Link, "Allgemein");
         harness.run_steps(4);
         harness
             .get_by_role_and_label(A11y::Button, "Aktionen für Jonas")
@@ -1617,22 +1613,16 @@ mod tests {
         let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
         wait_for_label(&mut harness, "Servername");
         // The rail's placeholders give way to the server list and the button
-        // moves up, so a click aimed before that misses: aim until it lands.
-        let start = std::time::Instant::now();
-        while harness.query_by_label("Server erstellen").is_none() {
-            assert!(
-                start.elapsed() < std::time::Duration::from_secs(15),
-                "the add dialog never opened"
-            );
-            harness
-                .get_by_role_and_label(egui::accesskit::Role::Button, "Server hinzufügen")
-                .click();
-            harness.run_steps(4);
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        // moves up; the click waits for that.
+        click_role(
+            &mut harness,
+            egui::accesskit::Role::Button,
+            "Server hinzufügen",
+        );
+        wait_for_label(&mut harness, "Server erstellen");
         // The Rollen panel has a "Name" field too: the dialog adds one.
         let names = harness.query_all_by_label("Name").count();
-        harness.get_by_label("Server erstellen").click();
+        click(&mut harness, "Server erstellen");
         harness.run_steps(6);
         assert_eq!(harness.query_all_by_label("Name").count(), names + 1);
         harness.get_by_label("Servername");
@@ -1815,7 +1805,7 @@ mod tests {
         let api = FakeApi::start(true, with_roles(log.clone()));
         let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
         wait_for_label(&mut harness, "Neue Rolle");
-        harness.get_by_role_and_label(A11y::Link, "Rollen").click();
+        click_role(&mut harness, A11y::Link, "Rollen");
         harness.run_steps(4);
         for name in ["Inhaber", "Moderation", "Stammgäste", "Alle Mitglieder"] {
             harness.get_by_role_and_label(A11y::Button, name);
@@ -1823,11 +1813,9 @@ mod tests {
         // Moderation's panel: its name, the delete, the nine switches.
         harness.get_by_role_and_label(A11y::Button, "Rolle löschen");
         harness.get_by_label("Name");
-        harness
-            .query_all_by_label("Server verwalten")
-            .next()
-            .expect("the switch")
-            .click();
+        click_node(&mut harness, "Server verwalten", |h| {
+            h.query_all_by_label("Server verwalten").next().map(id_of)
+        });
         let path = format!("/roles/{MODERATION}");
         wait_for(&mut harness, "the switch saved", |_| {
             !logged(&log, "PATCH", &path).is_empty()
@@ -1845,9 +1833,7 @@ mod tests {
             !logged(&log, "DELETE", &path).is_empty()
         });
         // The owner's panel: no delete, every switch on and fixed.
-        harness
-            .get_by_role_and_label(A11y::Button, "Inhaber")
-            .click();
+        click_role(&mut harness, A11y::Button, "Inhaber");
         wait_for(&mut harness, "the owner's panel", |h| {
             h.query_by_label("Rolle löschen").is_none()
         });
@@ -1861,6 +1847,9 @@ mod tests {
 
     /// Two quick switches on one role: each write settles from its own
     /// answer, so the second one's failure is said and not "Gespeichert.".
+    /// The second is refused by what it asks for (manage_channels) and
+    /// answered only after the first: the two requests are on their way at
+    /// once and could reach the stand-in in either order (GEL-408).
     #[test]
     fn a_failed_second_switch_is_not_saved() {
         use crate::app::testkit::wait_for_label;
@@ -1868,42 +1857,117 @@ mod tests {
         use egui::accesskit::Role as A11y;
         use egui_kittest::kittest::Queryable;
         let _config = crate::platform::paths::testing::TempConfig::new("roles-second-fails");
+        use std::sync::atomic::{AtomicBool, Ordering};
         let log = Log::default();
         let inner = with_roles(log.clone());
-        let patches = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let failed = log.clone();
+        let release = std::sync::Arc::new(AtomicBool::new(false));
+        let held = release.clone();
+        let api = FakeApi::start(true, move |method, path, body| {
+            if method == "PATCH" && path.starts_with("/roles/") && body.contains("manage_channels")
+            {
+                failed
+                    .lock()
+                    .push((method.into(), path.into(), body.into()));
+                while !held.load(Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                return Some(Reply::error(403, "forbidden"));
+            }
+            inner(method, path, body)
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Neue Rolle");
+        click_role(&mut harness, A11y::Link, "Rollen");
+        click_node(&mut harness, "Server verwalten", |h| {
+            h.query_all_by_label("Server verwalten").next().map(id_of)
+        });
+        // The second while the first is on its way.
+        click_now(&mut harness, "Kanäle verwalten", |h| {
+            h.query_all_by_label("Kanäle verwalten").next().map(id_of)
+        });
+        let path = format!("/roles/{MODERATION}");
+        wait_for(&mut harness, "both writes", |_| {
+            logged(&log, "PATCH", &path).len() == 2
+        });
+        // The first answered, the second held: then the refusal. (This shows
+        // the stand-in answered the first; the client may take it after the
+        // refusal, an order the panel's own tests in roles.rs cover too.)
+        wait_for(&mut harness, "the first answer", |_| api.answering() == 1);
+        release.store(true, Ordering::SeqCst);
+        wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
+        // Both answers taken, in whichever order the client did.
+        crate::app::testkit::wait_until_idle(&mut harness);
+        // The newer write sends the whole list, the older change too: what
+        // the panel's order tests in roles.rs take for granted.
+        let refused = logged(&log, "PATCH", &path)
+            .into_iter()
+            .find(|body| body.contains("manage_channels"))
+            .expect("the second write");
+        assert!(refused.contains("manage_server"), "{refused}");
+        // The refused switch shows the server's value again.
+        use egui_kittest::kittest::NodeT;
+        let channels = harness
+            .query_all_by_label("Kanäle verwalten")
+            .next()
+            .and_then(|n| n.accesskit_node().toggled());
+        assert_eq!(channels, Some(egui::accesskit::Toggled::False));
+    }
+
+    /// The same two switches with the answers the other way round: the
+    /// second is refused while the first is still on its way. The first's
+    /// success then says nothing of the second: "Nicht gespeichert" stays
+    /// and the refused switch shows the server's value (GEL-408).
+    #[test]
+    fn a_refused_second_switch_is_not_saved_by_the_first_answer() {
+        use crate::app::testkit::wait_for_label;
+        use crate::app::testkit::{FakeApi, HOME, Reply, launcher, wait_for};
+        use egui::accesskit::Role as A11y;
+        use egui_kittest::kittest::{NodeT, Queryable};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _config = crate::platform::paths::testing::TempConfig::new("roles-refused-first");
+        let log = Log::default();
+        let inner = with_roles(log.clone());
+        let release = std::sync::Arc::new(AtomicBool::new(false));
+        let held = release.clone();
         let api = FakeApi::start(true, move |method, path, body| {
             if method == "PATCH" && path.starts_with("/roles/") {
-                let n = patches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if n == 1 {
-                    failed
-                        .lock()
-                        .push((method.into(), path.into(), body.into()));
+                if body.contains("manage_channels") {
                     return Some(Reply::error(403, "forbidden"));
+                }
+                while !held.load(Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
             }
             inner(method, path, body)
         });
         let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
         wait_for_label(&mut harness, "Neue Rolle");
-        harness.get_by_role_and_label(A11y::Link, "Rollen").click();
-        harness.run_steps(4);
-        harness
-            .query_all_by_label("Server verwalten")
-            .next()
-            .expect("the switch")
-            .click();
-        harness.run_steps(1);
-        harness
+        click_role(&mut harness, A11y::Link, "Rollen");
+        click_node(&mut harness, "Server verwalten", |h| {
+            h.query_all_by_label("Server verwalten").next().map(id_of)
+        });
+        click_now(&mut harness, "Kanäle verwalten", |h| {
+            h.query_all_by_label("Kanäle verwalten").next().map(id_of)
+        });
+        // The refusal answered and shown, the first held: then the first.
+        wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
+        wait_for(&mut harness, "the first held", |_| api.answering() == 1);
+        release.store(true, Ordering::SeqCst);
+        crate::app::testkit::wait_until_idle(&mut harness);
+        assert!(
+            harness
+                .query_by_label("Nicht gespeichert – erneut versuchen")
+                .is_some()
+        );
+        assert!(harness.query_by_label("Gespeichert.").is_none());
+        // The refused switch shows the server's value again; the stand-in
+        // has no gateway to bring the first write's role.
+        let channels = harness
             .query_all_by_label("Kanäle verwalten")
             .next()
-            .expect("the switch")
-            .click();
-        let path = format!("/roles/{MODERATION}");
-        wait_for(&mut harness, "both writes", |_| {
-            logged(&log, "PATCH", &path).len() == 2
-        });
-        wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
+            .and_then(|n| n.accesskit_node().toggled());
+        assert_eq!(channels, Some(egui::accesskit::Toggled::False));
     }
 
     /// The "+" on a member row lists the roles; a checkbox saves the
@@ -1918,15 +1982,11 @@ mod tests {
         let api = FakeApi::start(true, with_roles(log.clone()));
         let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
         wait_for_label(&mut harness, "Rollen für Jonas");
-        harness
-            .get_by_role_and_label(A11y::Link, "Mitglieder")
-            .click();
+        click_role(&mut harness, A11y::Link, "Mitglieder");
         harness.run_steps(4);
-        harness.get_by_label("Rollen für Jonas").click();
+        click(&mut harness, "Rollen für Jonas");
         wait_for_label(&mut harness, "Rollen verwalten");
-        harness
-            .get_by_role_and_label(A11y::CheckBox, "Stammgäste")
-            .click();
+        click_role(&mut harness, A11y::CheckBox, "Stammgäste");
         let path = format!("/servers/{HOME}/members/{JONAS}/roles");
         wait_for(&mut harness, "the roles saved", |_| {
             !logged(&log, "PUT", &path).is_empty()
@@ -1934,7 +1994,7 @@ mod tests {
         let sent: serde_json::Value = serde_json::from_str(&logged(&log, "PUT", &path)[0]).unwrap();
         assert_eq!(sent, serde_json::json!({"role_ids": [STAMMGAESTE]}));
         harness.run_steps(4);
-        harness.get_by_label("Rollen verwalten").click();
+        click(&mut harness, "Rollen verwalten");
         harness.run_steps(4);
         assert!(harness.query_by_label("Rollen verwalten").is_none());
     }

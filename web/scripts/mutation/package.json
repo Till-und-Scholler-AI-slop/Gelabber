@@ -1,0 +1,9 @@
+{
+  "name": "gelabber-web-mutation",
+  "private": true,
+  "description": "Stryker for .github/workflows/mutation-web.yml (GEL-388); Vitest comes from web/node_modules.",
+  "devDependencies": {
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/vitest-runner": "10.1.1"
+  }
+}

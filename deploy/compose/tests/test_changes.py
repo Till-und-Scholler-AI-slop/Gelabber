@@ -58,6 +58,8 @@ class Areas(unittest.TestCase):
                 ('.github/workflows/desktop-release.yml', {'desktop', 'deploy'}),
                 ('.github/workflows/libwebrtc-store.yml', {'desktop', 'deploy'}),
                 ('.github/workflows/scripts/apt-install.sh', {'desktop', 'deploy'}),
+                # The rust job picks and checks the upgrade test's release with it (GEL-444).
+                ('.github/workflows/scripts/previous_release.sh', {'backend', 'deploy'}),
                 ('.github/workflows/minio-images.yml', {'minio', 'deploy'}),
                 ('.github/workflows/publish-minio.yml', {'minio', 'deploy'}),
                 ('.github/workflows/cache-cleanup.yml', {'deploy'}),
@@ -100,7 +102,7 @@ class Areas(unittest.TestCase):
         # Read by test_public_pages.py, test_update_signature.py,
         # generate-emoji-data.py --check, landingImage.test.mjs,
         # ci-fault-loop.checks.mjs (a step of e2e-extended.yml) and the
-        # packaging tests (prerequisites.py). Also the
+        # packaging tests (prerequisites.py, workflow_data.py and its PyYAML). Also the
         # deployment tests' own inputs outside deploy/: the Claude Code hooks,
         # both versions, the backend's build.
         for path, area in (('.claude/hooks/fast_checks.py', 'deploy'),
@@ -112,7 +114,9 @@ class Areas(unittest.TestCase):
                            ('desktop/ui/assets/emoji/emoji-data.json', 'web'),
                            ('.github/workflows/e2e-extended.yml', 'web'),
                            ('docs/design/v0.10/landing-preview-en.png', 'web'),
-                           ('deploy/compose/tests/prerequisites.py', 'desktop')):
+                           ('deploy/compose/tests/prerequisites.py', 'desktop'),
+                           ('deploy/compose/tests/workflow_data.py', 'desktop'),
+                           ('deploy/compose/tests/requirements.txt', 'desktop')):
             with self.subTest(path=path):
                 self.assertTrue((ROOT / path).is_file())
                 self.assertIn(area, changes.areas([path]))

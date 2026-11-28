@@ -1,4 +1,4 @@
-/* global URL */
+/* global URL, setImmediate */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
@@ -43,6 +43,7 @@ async function finishProbe(
         waitForFunction: async () => {},
         url: () => "http://127.0.0.1:5174/s/server-control/c/text-control",
         setDefaultTimeout() {},
+        on() {},
         isClosed: () => pageClosed,
         getByRole: () => locator,
         getByLabel: () => locator,
@@ -109,6 +110,7 @@ async function finishProbe(
   const process = {
     env: { GELABBER_E2E_REPORT: "/tmp/native-finish-control.json" },
     exitCode: 0,
+    on() {},
   };
   const mocks = {
     playwright: {
@@ -118,10 +120,14 @@ async function finishProbe(
     "./probe.mjs": { instrument() {}, sample() {} },
     "./native-evaluate.mjs": {
       ...native,
-      // Shorten only the infrastructure control's waits. Execute the actual
-      // deadline helper; the committed harness retains its 5/12s budgets.
-      deadlineProbe: (probe, deadline) =>
-        native.deadlineProbe(probe, Math.min(deadline, Date.now() + 25)),
+      // Closes that never settle run into the harness's own deadline: shorten
+      // it to 25 ms for that case only. Everywhere else the 5/12 s budgets
+      // stay, so a healthy step on a slow machine cannot run out of time.
+      deadlineProbe:
+        brokenClose === "pending"
+          ? (probe, deadline) =>
+              native.deadlineProbe(probe, Math.min(deadline, Date.now() + 25))
+          : native.deadlineProbe,
     },
     "./browser-options.mjs": options,
     "node:child_process": {
@@ -272,4 +278,423 @@ test("actual harness pending close paths time out visibly and still write the re
       ),
     );
   assert.equal(r.reports[0].gate.passed, false);
+});
+
+// GEL-453, GEL-423: the actual harness with a fake browser. `page` overrides
+// parts of the fake page, `fs` the file calls; `process` is the harness's own.
+async function harnessProbe({ page: overrides = {}, fs = {}, process }) {
+  const locator = {
+    fill: async () => {},
+    click: async () => {},
+    first() {
+      return this;
+    },
+    // Only the channel dialog's "Erstellen" takes the override.
+    getByRole(role, { name } = {}) {
+      if (role === "dialog") return { ...this, dialog: name };
+      return this.dialog === "Kanal erstellen" &&
+        name === "Erstellen" &&
+        overrides.createClick
+        ? { ...this, click: overrides.createClick }
+        : this;
+    },
+    getByLabel() {
+      return this;
+    },
+    getByText() {
+      return this;
+    },
+    inputValue: async () => "http://127.0.0.1:5174/invite/control",
+  };
+  const browser = {
+    version: () => "155.0",
+    newContext: async () => ({
+      addInitScript: async () => {},
+      newPage: async () => ({
+        goto: async () => {},
+        waitForURL: async () => {},
+        waitForFunction: async () => {},
+        url: () => "http://127.0.0.1:5174/s/server-control/c/text-control",
+        setDefaultTimeout() {},
+        on() {},
+        isClosed: () => false,
+        getByRole: (role, options) => locator.getByRole(role, options),
+        getByLabel: () => locator,
+        locator: () => locator,
+        waitForResponse: async () => ({
+          status: () => 200,
+          json: async () => ({ id: "voice-control" }),
+        }),
+        evaluate: async (_fn, arg) =>
+          arg?.path === "/servers/server-control"
+            ? {
+                status: 200,
+                body: { channels: [{ id: "text-control", kind: "text" }] },
+              }
+            : { status: 200, body: { user: { id: "owned-control" } } },
+        close: async () => {},
+        ...overrides,
+      }),
+      close: async () => {},
+    }),
+    close: async () => {},
+  };
+  const mocks = {
+    playwright: {
+      chromium: { launch: async () => browser },
+      firefox: { launch: async () => browser },
+    },
+    "./probe.mjs": { instrument() {}, sample() {} },
+    "./native-evaluate.mjs": native,
+    "./browser-options.mjs": options,
+    "node:child_process": {
+      execFileSync: (_cmd, args) =>
+        args.includes("rev-parse") ? "a".repeat(40) : "",
+    },
+    "node:fs/promises": {
+      readdir: async () => [],
+      readFile: async () => "",
+      mkdir: async () => {},
+      writeFile: async () => {},
+      ...fs,
+    },
+  };
+  const harnessUrl = new URL("./harness.mjs", import.meta.url);
+  const context = vm.createContext({ URL, process, console: { log() {} } });
+  const source = new vm.SourceTextModule(await readFile(harnessUrl, "utf8"), {
+    context,
+    identifier: harnessUrl.href,
+    initializeImportMeta: (meta) => {
+      meta.url = harnessUrl.href;
+    },
+  });
+  await source.link(async (name) => {
+    const exports = mocks[name] ?? (await import(name));
+    return new vm.SyntheticModule(
+      Object.keys(exports),
+      function () {
+        for (const [k, v] of Object.entries(exports)) this.setExport(k, v);
+      },
+      { context },
+    );
+  });
+  await source.evaluate();
+  const h = await source.namespace.startHarness();
+  // The harness module itself, for a check that throws its CheckFailure.
+  h.module = source.namespace;
+  return h;
+}
+const harnessProcess = () => {
+  const listeners = {};
+  return {
+    env: { GELABBER_E2E_REPORT: "/tmp/stray-rejection-control.json" },
+    exitCode: 0,
+    listeners,
+    on(event, listener) {
+      listeners[event] = listener;
+    },
+  };
+};
+test("a fixture whose channel click fails leaves no response waiter unheard", async () => {
+  const unheard = [];
+  const listen = (reason) => unheard.push(reason);
+  globalThis.process.on("unhandledRejection", listen);
+  try {
+    let expire;
+    const h = await harnessProbe({
+      process: harnessProcess(),
+      page: {
+        waitForResponse: () =>
+          new Promise((_, reject) => {
+            expire = reject;
+          }),
+        createClick: async () => {
+          throw new Error("create-click-failed");
+        },
+      },
+    });
+    await assert.rejects(h.fixture(), /create-click-failed/);
+    // The waiter's own deadline passes after the fixture already failed.
+    expire(new Error("page.waitForResponse: Timeout 12000ms exceeded."));
+    await new Promise((done) => setImmediate(done));
+  } finally {
+    globalThis.process.off("unhandledRejection", listen);
+  }
+  assert.deepEqual(unheard, []);
+});
+const strayRejection = () => {
+  const stray = new Error(
+    'page.waitForResponse: Timeout 12000ms exceeded while waiting for event "response" PRIVATE',
+  );
+  stray.name = "TimeoutError";
+  stray.stack = [
+    stray.message,
+    "    at responseTo (file:///w/web/scripts/e2e/harness.mjs:47:46)",
+    "    at async channel (file:///w/web/scripts/e2e/harness.mjs:331:24)",
+    "    at file:///w/web/scripts/e2e/core.mjs:55:41",
+  ].join("\n");
+  return stray;
+};
+test("a stray rejection fails by name and the run goes on", async () => {
+  const process = harnessProcess();
+  const h = await harnessProbe({ process });
+  const before = await h.run("first-control", [], async () => ({}));
+  assert.equal(before.status, "PASS");
+  assert.equal(typeof process.listeners.unhandledRejection, "function");
+  // A promise first-control left behind rejects while second-control runs.
+  const after = await h.run("second-control", [], async () => {
+    process.listeners.unhandledRejection(strayRejection(), Promise.resolve());
+    return {};
+  });
+  assert.equal(after.status, "PASS");
+  const row = h.report.results.find((r) => r.id === "stray-rejection");
+  assert.equal(row.status, "FAIL");
+  assert.equal(row.reason, "browser-deadline");
+  assert.equal(row.during, "second-control");
+  assert.equal(row.after, "first-control");
+  assert.equal(row.site, "core.mjs:55:41");
+  assert.equal(row.harnessSite, "harness.mjs:331:24");
+  assert.equal(process.exitCode, 1);
+  assert.ok(!JSON.stringify(h.report.results).includes("PRIVATE"));
+});
+test("a stray while the report directory is made counts in the gate", async () => {
+  const process = harnessProcess();
+  const reports = [];
+  // run() makes the checkpoint's directory too; only finish()'s call counts.
+  let armed = false;
+  const h = await harnessProbe({
+    process,
+    fs: {
+      mkdir: async () => {
+        if (!armed) return;
+        armed = false;
+        process.listeners.unhandledRejection(
+          strayRejection(),
+          Promise.resolve(),
+        );
+      },
+      writeFile: async (path, body) => {
+        if (path === process.env.GELABBER_E2E_REPORT)
+          reports.push(JSON.parse(body));
+      },
+    },
+  });
+  assert.equal(
+    (await h.run("only-control", [], async () => ({}))).status,
+    "PASS",
+  );
+  armed = true;
+  await h.finish();
+  assert.equal(reports.length, 1);
+  assert.ok(reports[0].results.some((r) => r.id === "stray-rejection"));
+  assert.equal(reports[0].gate.passed, false);
+});
+test("a stray after the report is written goes beside it", async () => {
+  const process = harnessProcess();
+  const writes = {};
+  let late;
+  const h = await harnessProbe({
+    process,
+    fs: {
+      writeFile: async (path, body) => {
+        writes[path] = JSON.parse(body);
+        // The report is serialised; a stray arrives before the write ends.
+        if (path === process.env.GELABBER_E2E_REPORT)
+          process.listeners.unhandledRejection(
+            strayRejection(),
+            Promise.resolve(),
+          );
+        else late?.();
+      },
+    },
+  });
+  const stray = new Promise((resolve) => {
+    late = resolve;
+  });
+  assert.equal(
+    (await h.run("only-control", [], async () => ({}))).status,
+    "PASS",
+  );
+  await h.finish();
+  await stray;
+  const report = writes[process.env.GELABBER_E2E_REPORT];
+  assert.equal(report.gate.passed, true);
+  const beside = writes[`${process.env.GELABBER_E2E_REPORT}.stray.json`];
+  assert.equal(beside.status, "FAIL");
+  assert.equal(beside.results[0].id, "stray-rejection");
+  assert.equal(beside.results[0].after, "only-control");
+  assert.equal(process.exitCode, 1);
+  assert.ok(!JSON.stringify(beside).includes("PRIVATE"));
+});
+const fixtureSteps = [
+  "Publisher-register-page",
+  "Publisher-register-submit",
+  "server-create",
+  "invite-link",
+  "text-channel-open",
+  "voice-channel-a",
+  "voice-channel-b",
+  "Member-register-page",
+  "Member-register-submit",
+  "Watch-register-page",
+  "Watch-register-submit",
+  "Member-join",
+  "Watch-join",
+  "Publisher-voice-open",
+];
+test("a fixture that runs out of time lists its steps and the call that ran out", async () => {
+  // The second actor's (Member's) register page runs out of time.
+  let registers = 0;
+  const h = await harnessProbe({
+    process: harnessProcess(),
+    page: {
+      goto: async (url) => {
+        if (url.endsWith("/register") && ++registers === 2) {
+          const error = new Error(
+            `page.goto: Timeout 12000ms exceeded.\nCall log:\n  - navigating to "${url}?PRIVATE"`,
+          );
+          error.name = "TimeoutError";
+          throw error;
+        }
+      },
+    },
+  });
+  const row = await h.setup("isolated-app-fixture", [], () => h.fixture());
+  assert.equal(row.status, "FAIL");
+  assert.equal(row.reason, "browser-deadline");
+  assert.deepEqual(
+    Array.from(row.metrics.steps, (s) => s.step),
+    fixtureSteps.slice(0, fixtureSteps.indexOf("Member-register-page") + 1),
+  );
+  for (const s of row.metrics.steps) assert.ok(s.ms >= 0, s.step);
+  assert.equal(row.action, "page.goto");
+  // The line in actor() that opens /register.
+  const source = (
+    await readFile(new URL("./harness.mjs", import.meta.url), "utf8")
+  ).split("\n");
+  const line =
+    source.findIndex((text) =>
+      text.includes("await page.goto(`${base}/register`);"),
+    ) + 1;
+  assert.match(row.harnessSite, new RegExp(`^harness\\.mjs:${line}:\\d+$`));
+  assert.ok(!JSON.stringify(row).includes("PRIVATE"));
+});
+test("each fixture's row holds only its own steps", async () => {
+  const h = await harnessProbe({ process: harnessProcess() });
+  let first;
+  const row = await h.setup("isolated-app-fixture", [], async () => {
+    first = await h.fixture();
+    return { steps: first.steps };
+  });
+  assert.equal(row.status, "PASS");
+  // A scenario registers another actor and builds a second fixture.
+  await h.actor("RaceCandidate");
+  const second = await h.fixture();
+  for (const steps of [row.metrics.steps, second.steps])
+    assert.deepEqual(
+      Array.from(steps, (s) => s.step),
+      fixtureSteps,
+    );
+});
+test("a fixture whose invite link does not come records the invite requests and the page", async () => {
+  // GEL-423: the request that makes the link failed, and the dialog said so.
+  const listeners = {};
+  const create = {
+    method: () => "POST",
+    url: () => "http://127.0.0.1:5174/api/servers/server-control/invites",
+  };
+  const h = await harnessProbe({
+    process: harnessProcess(),
+    page: {
+      on: (event, listener) => (listeners[event] = listener),
+      waitForFunction: async () => {
+        listeners.request(create);
+        listeners.response({ request: () => create, status: () => 500 });
+        const error = new Error(
+          "page.waitForFunction: Timeout 12000ms exceeded.",
+        );
+        error.name = "TimeoutError";
+        throw error;
+      },
+      evaluate: async (fn, arg) =>
+        fn.name === "invitePageState"
+          ? {
+              path: "/s/:id",
+              dialogs: [{ name: "E2E einladen", text: "Link fehlgeschlagen" }],
+              field: "missing",
+            }
+          : arg?.path === "/servers/server-control"
+            ? {
+                status: 200,
+                body: { channels: [{ id: "text-control", kind: "text" }] },
+              }
+            : { status: 200, body: { user: { id: "owned-control" } } },
+    },
+  });
+  const row = await h.setup("isolated-app-fixture", [], () => h.fixture());
+  assert.equal(row.status, "FAIL");
+  assert.equal(row.action, "page.waitForFunction");
+  const metrics = JSON.parse(JSON.stringify(row.metrics));
+  assert.deepEqual(
+    metrics.inviteRequests.map(({ method, status, failed }) => [
+      method,
+      status,
+      failed,
+    ]),
+    [["POST", 500, false]],
+  );
+  assert.equal(metrics.page.field, "missing");
+  assert.equal(metrics.page.dialogs[0].text, "Link fehlgeschlagen");
+  assert.equal(metrics.steps.at(-1).step, "invite-link");
+});
+test("a case that runs out of time lists its steps, the failed one last, and its evidence", async () => {
+  // GEL-443: which wait of a chat fault scenario ran out, after which steps.
+  const h = await harnessProbe({ process: harnessProcess() });
+  const timeout = () => {
+    const error = new Error("locator.click: Timeout 12000ms exceeded.");
+    error.name = "TimeoutError";
+    return error;
+  };
+  const row = await h.run("stepped-control", [], async () => {
+    await h.step("first", async () => {});
+    await h.step("second", async () => {
+      // A step inside a step is recorded too, before the one around it.
+      await h.step("inner", async () => {});
+    });
+    try {
+      await h.step("runs-out", async () => {
+        throw timeout();
+      });
+    } catch (error) {
+      error.evidence = { chatRequests: [{ method: "POST", status: null }] };
+      throw error;
+    }
+  });
+  assert.equal(row.status, "FAIL");
+  assert.equal(row.reason, "browser-deadline");
+  const metrics = JSON.parse(JSON.stringify(row.metrics));
+  assert.deepEqual(
+    metrics.steps.map((s) => s.step),
+    ["first", "inner", "second", "runs-out"],
+  );
+  for (const s of metrics.steps) assert.ok(s.ms >= 0, s.step);
+  assert.deepEqual(metrics.chatRequests, [{ method: "POST", status: null }]);
+  // Evidence never replaces a metric of the scenario's own: a check's
+  // `requests` (paging-error-data-preservation counts its failed reads).
+  const own = await h.run("own-metric-control", [], async () => {
+    try {
+      h.module.check(false, "paging-failure-erased-data-or-auto-looped", {
+        requests: 3,
+      });
+    } catch (error) {
+      error.evidence = { requests: [], chatRequests: [] };
+      throw error;
+    }
+  });
+  assert.equal(own.metrics.requests, 3);
+  assert.deepEqual(own.metrics.chatRequests, []);
+  // A case without steps keeps the row it had; a step outside a case runs.
+  const plain = await h.run("plain-control", [], async () => ({ kept: 1 }));
+  assert.deepEqual(plain.metrics, { kept: 1 });
+  assert.equal(await h.step("outside", async () => "ran"), "ran");
 });

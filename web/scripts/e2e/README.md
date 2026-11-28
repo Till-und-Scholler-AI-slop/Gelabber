@@ -5,14 +5,23 @@
 `.github/workflows/e2e-extended.yml` runs these scenarios against its own API,
 SFU, Postgres, Redis and MinIO (`ci-fault-prepare.mjs`, then `fault-run.mjs`
 per browser and profile from `profiles.mjs`): the fault profiles `core-faults`
-and `media-faults` in Chromium and Firefox, the profiles `core` and `access`
-in Chromium (`media` once its scenarios pass). It runs after pushes to a
+and `media-faults` in Chromium and Firefox, the profiles `core`, `media` and
+`access` in Chromium. It runs after pushes to a
 version branch that touch `backend/` or `web/`, on release and hotfix pull
 requests to `main`, and by hand. After a push run the issue "Extended E2E
 fails on <branch>" is opened or updated when the run is red and closed when it
-is green again (GEL-378). The same workflow runs `chat-workflows.mjs` and
-`../smoke-pwa.mjs`. The rest of this file records how the scenarios came
-about.
+is green again (GEL-378). The same workflow runs the browser checks against a
+running app (`server-checks.mjs`: `chat-workflows.mjs`, `search-context.mjs`,
+`webapp-accessibility.mjs` and four smokes) and `../smoke-pwa.mjs`;
+`../README.md` lists every script. The rest of this file records how the
+scenarios came about.
+
+A profile can list scenarios known to fail (`expectedFailures`: id ->
+`{ issue, reason, site? }`). Such a scenario that fails with that reason (and
+at that file:line) leaves the gate green and is logged as `EXPECTED FAIL`; one
+that fails otherwise, passes, or is BLOCKED turns the gate red, a pass until
+its entry goes. `leftOut` names scenarios of the suite a profile leaves out,
+with the reason the run prints (`LEFT OUT`).
 
 Gelabber uses mediasoup 0.33 through the official Rust binding
 and public mediasoup-client 3.26.0, with Gelabber's own v4 WebSocket/authority
@@ -50,7 +59,7 @@ npm run test:e2e-app
 
 The new runner deliberately accepts only loopback HTTP/HTTPS origins and rejects credentials/query strings. It is not a production account-creating smoke. The coordinator owns integration, review, remote invocation and final HTTPS/WAN acceptance. Local browser launches need the already authorized socket/process access. Do not stop or restart the shared stack to run these scenarios.
 
-`FAIL` or required `BLOCKED` makes the process exit nonzero, as do failed cleanup or fixture restoration. Explicitly unselected `NOT_RUN` rows do not fail a selected subset gate. The report lists exclusions and marks `completeAcceptance:false` even for a passing subset; manual cases selected explicitly remain required `BLOCKED`. Reports distinguish `confirmed-product-failure` (a recorded positive control followed by a failed boundary), `unconfirmed-failure` (needs a control or harness investigation), `observed-pass`, and `blocked`. Historical failed probes are not product regressions just because they were red. Generic Playwright exceptions retain only a fixed reason and a test-file line, never their call logs or URLs.
+`FAIL` or required `BLOCKED` makes the process exit nonzero, as do failed cleanup or fixture restoration. Explicitly unselected `NOT_RUN` rows do not fail a selected subset gate. The report lists exclusions and marks `completeAcceptance:false` even for a passing subset; manual cases selected explicitly remain required `BLOCKED`. Reports distinguish `confirmed-product-failure` (a recorded positive control followed by a failed boundary), `unconfirmed-failure` (needs a control or harness investigation), `observed-pass`, and `blocked`. Historical failed probes are not product regressions just because they were red. Generic Playwright exceptions retain only a fixed reason and a test-file line, never their call logs or URLs; a Playwright timeout adds the call that ran out (`action`, e.g. `page.goto`) and the harness line (`harnessSite`). A fixture's row lists its own steps with their times in `metrics.steps`, when it passes and when it fails (GEL-423).
 
 Native interface deadlines distinguish native-getStats from outer-page-evaluate. Observation budgets are absolute and shared by all probes; late success and already-expired work cannot pass. Timeout produces test-error/FAIL, quarantines the page, closes it once and blocks later cases in that group. Finally never evaluates quarantined pages; native restore, context/browser close and owned runtime/cache teardown are bounded or independently attempted and visible red on failure. No missing stats or rendered frames are converted to a pass.
 
@@ -88,17 +97,37 @@ Add `GELABBER_E2E_BROWSER=firefox` for Firefox. The profiles `media`,
 combined with `GELABBER_E2E_CASES` or `GELABBER_E2E_SUITE`. The runtime
 refuses an env file readable by others, a database not named
 `gelabber_fault_<hex>` and a binary whose SHA-256 differs from its manifest.
-Ports are bound exclusively and existing services are never stopped. A Redis
+Ports are bound exclusively, and no service is stopped but an own API or SFU
+that a dead runner left behind. The own API and SFU end with the runner (an
+exit hook); a runner ended by SIGKILL, by SIGTERM or SIGINT sent to it alone
+or for lack of memory runs no hook, so each of them leaves a private PID file
+beside its log in `/tmp` that names it and its runner. The next start ends
+such a leftover only when that runner is dead and the leftover runs this
+start's own API or SFU binary, says so and records its PID as
+`leftoverRemoved` in the report; while the runner is alive, the start ends
+`BLOCKED live-fault-run-owns-the-ports` and touches nothing of it. A leftover
+it may not end stays; when it then holds the port, or for the API the fault
+database, the start ends `BLOCKED port-taken-<why>` or
+`fault-db-taken-<why>`. A start deletes only the PID file it wrote (GEL-457).
+A promise that start-up leaves behind and that rejects before the
+harness listens fails as `stray-rejection` in
+`$GELABBER_E2E_REPORT.startup-stray.json`, and the runner tears down. A Redis
 reset deletes only four exact topic keys, never `FLUSH`. Proxies are restored
 and owned processes closed in `finally`. A startup or teardown failure makes
 the exit code nonzero and is written, redacted, beside the report as
-`$GELABBER_E2E_REPORT.startup.json` or `.teardown.json`.
+`$GELABBER_E2E_REPORT.startup.json` or `.teardown.json`. A promise that a
+scenario left behind and that rejects later fails as its own row,
+`stray-rejection`, and the run goes on to its report and teardown (GEL-453).
+Its `site` and `harnessSite` say where the promise came from; `during` (the
+case that was running) and `after` (the last case that finished) say only
+when it arrived. One that arrives after the report is written goes beside it
+as `$GELABBER_E2E_REPORT.stray.json`.
 
 ## Scenario contracts
 
 - Media: actual UI "Live gehen" watched inside the voice channel (viewers join the call; no camera/display calls and at most their microphone sender); several people live at once; default autoplay; late watch aged at least 30 seconds from publication; native selected ICE path; decoded and rendered frame growth with changing synthetic pixels and distinct Live/camera color bands. Bytes alone cannot pass. First-frame budgets: 5 seconds direct, 10 seconds relay. Native publisher encoding must begin first.
 - Recovery: targeted browser Media-WS/Gateway disconnects, automatic signaling return within 20 seconds, same live capture track sent without another display request. Gateway-only recovery must keep the healthy peer. No publisher click after the fault. Browser offline for 8 seconds is separately labeled: established UDP may remain flowing; it does not claim an OS network outage or server restart.
-- Lifecycle: all 20 live start/stop cycles run before the current client resource assertions are assessed, followed by an independent late viewer. A voice connection has at most two active SDK PCs; stop leaves voice audio. Public transport compaction retires old native resources before retaining captures on replacement transports. Report the actual native PC/transceiver counts from the executed candidate; the previous engine's sender-reuse and fixed SDP-size results do not qualify v4. These checks do not prove unexposed SFU publication/task bounds. No reload of the publisher during the cycles.
+- Lifecycle: 20 live start/stop cycles. In each, the watcher stops watching before the Live ends, so the next cycle starts from "Zuschauen"; each cycle's client resources are checked in the cycle (one connection that sends and one that only receives, per participant) and once more after the loop, followed by an independent late viewer, which leaves the call with the scenario. A re-watch's first frame has 15 seconds (each cycle records it). A voice connection has at most two active SDK PCs; stop leaves voice audio. Public transport compaction retires old native resources before retaining captures on replacement transports. Report the actual native PC/transceiver counts from the executed candidate; the previous engine's sender-reuse and fixed SDP-size results do not qualify v4. These checks do not prove unexposed SFU publication/task bounds. No reload of the publisher during the cycles.
 - UI: SPA channel navigation must not label old-channel video as the new channel; stop/leave/mute/live controls remain reachable. Native picker cancellation and a refused Live must release capture. Simulated `NotAllowedError` requires a visible playback retry; actual default autoplay is a separate native-browser check, without policy overrides.
 - Watch audio: room microphone audio exactly once plus the selected publisher's Live audio paired to its current Live Producer/epoch. A Live nobody opted into is not forwarded. Positive other-room audio/Live must not leak. Native source/RTP and duplicate-playback observations complement session-wide Volume/Deafen/click-retry checks. Human audible quality stays manual.
 - Forced track arrival: before holding/reversing callbacks, require exactly two live fixture capture objects (one camera, one Live display), each bound to a distinct current native sender. Read each sender's own stats and require fresh encoded-frame growth for every source across two observations. One legacy encoding and multiple simulcast RIDs are both valid; several RTP records for one source cannot substitute for a missing source. Native track identifiers stay in browser memory; evidence uses fixture ordinals and RID labels. Run the focused ownership/deadline checks with `node --test scripts/e2e/publisher-encoders.checks.mjs`.

@@ -104,13 +104,14 @@ export function replyTo(original: Message): Reply {
     deleted: false,
     author: { id: original.author.id, name: original.author.name },
     excerpt: replyExcerpt(original.content),
-    has_attachment: asAttachmentList(original.attachments).length > 0,
+    has_attachment: original.attachments.length > 0,
     has_gif: Boolean(original.gif),
     ...withSystem(original.system),
   };
 }
 
-/** Redis cjson re-encoding may hand back anything; keep a usable reply. */
+/** The reply part, whole or left out: the shape checks of `api/wire.ts` take
+ *  a message without looking at its optional parts. */
 export function asReply(value: unknown): Reply | null {
   if (value === null || typeof value !== "object") return null;
   const reply = value as Partial<Reply>;
@@ -152,8 +153,9 @@ export type LinkPreview = {
 
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
 
-/** Previews from the wire, whole or dropped: cjson turns `[]` into `{}`, and
- *  only http(s) pages, API images and YouTube ids are kept. */
+/** Previews from the wire, whole or dropped (the shape checks of `api/wire.ts`
+ *  leave optional parts to this): only http(s) pages, API images and
+ *  YouTube ids are kept. */
 export function asPreviewList(value: unknown): LinkPreview[] {
   if (!Array.isArray(value)) return [];
   const text = (v: unknown) => (typeof v === "string" && v ? v : undefined);
@@ -199,7 +201,8 @@ export type Gif = {
   still: string | null;
 };
 
-/** Redis cjson re-encoding may hand back anything; a GIF must be whole. */
+/** A GIF must be whole, or the message shows none: the shape checks of
+ *  `api/wire.ts` leave optional parts to this. */
 export function asGif(value: unknown): Gif | null {
   if (value === null || typeof value !== "object") return null;
   const gif = value as Partial<Gif>;
@@ -225,13 +228,6 @@ export function asGif(value: unknown): Gif | null {
 
 export type Reaction = { emoji: string; user_ids: string[] };
 
-/** Redis cjson turns an empty array into `{}`; only strings are user ids. */
-export function asMentionList(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((id): id is string => typeof id === "string")
-    : [];
-}
-
 export type MessagePage = {
   /** Oldest → newest within the page. */
   messages: Message[];
@@ -240,24 +236,6 @@ export type MessagePage = {
    *  after optimistic deletes so `has_more` can still page. */
   older?: string;
 };
-
-/** Redis Lua `cjson.encode` turns `[]` into `{}`. */
-export function asAttachmentList(value: unknown): Attachment[] {
-  return Array.isArray(value) ? value : [];
-}
-
-/** Redis cjson re-encoding represents empty arrays as {}. */
-export function asReactionList(value: unknown): Reaction[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(
-    (reaction): reaction is Reaction =>
-      reaction !== null &&
-      typeof reaction === "object" &&
-      typeof reaction.emoji === "string" &&
-      Array.isArray(reaction.user_ids) &&
-      reaction.user_ids.every((id: unknown) => typeof id === "string"),
-  );
-}
 
 export type ListMessagesParams = {
   before?: string;

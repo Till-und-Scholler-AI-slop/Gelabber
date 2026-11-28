@@ -1307,6 +1307,7 @@ fn select(ui: &mut Ui, id: Id, options: &[(Option<Uuid>, String)], value: &mut O
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::testkit::{click, click_role};
 
     #[test]
     fn invites_parse_like_the_web() {
@@ -1396,8 +1397,6 @@ mod tests {
         use std::sync::Arc;
         use std::sync::atomic::AtomicBool;
 
-        use egui_kittest::kittest::Queryable;
-
         use crate::app::testkit::{FakeApi, HOME, Reply, launcher, wait_for, workspace};
         use crate::platform::paths::testing::TempConfig;
 
@@ -1443,19 +1442,27 @@ mod tests {
         let served_now = || served.load(Ordering::SeqCst);
         wait_for(&mut harness, "the first link", |_| served_now() == 1);
         harness.run_steps(3);
-        harness.get_by_label("Ablauf & Limit ändern").click();
+        click(&mut harness, "Ablauf & Limit ändern");
         crate::app::testkit::wait_for_label(&mut harness, "1 Stunde");
-        harness.get_by_label("1 Stunde").click();
+        click(&mut harness, "1 Stunde");
         wait_for(&mut harness, "the held request", |_| posts() == 2);
-        harness.get_by_label("24 Stunden").click();
+        crate::app::testkit::click_now(&mut harness, "24 Stunden", |h| {
+            use egui_kittest::kittest::Queryable;
+            h.query_by_label("24 Stunden")
+                .map(crate::app::testkit::id_of)
+        });
         wait_for(&mut harness, "the newest link", |_| served_now() == 2);
         harness.run_steps(5);
         release.store(true, Ordering::SeqCst);
         wait_for(&mut harness, "the unseen link's revoke", |_| {
             api.saw("DELETE /invites/einestunde22")
         });
-        // The link replaced by the shown one goes too; the shown one stays.
-        assert!(api.saw("DELETE /invites/siebentage22"));
+        // The link replaced by the shown one goes too (its own request, in
+        // either order); the shown one stays.
+        wait_for(&mut harness, "the replaced link's revoke", |_| {
+            api.saw("DELETE /invites/siebentage22")
+        });
+        crate::app::testkit::wait_until_idle(&mut harness);
         assert!(!api.saw("DELETE /invites/vierundzwanz"));
     }
 
@@ -1502,19 +1509,15 @@ mod tests {
         assert!(harness.query_by_label(question).is_none());
         assert!(harness.query_by_label("Einladungslink oder Code").is_some());
         // "Schließen" asks too; "Verwerfen" closes it.
-        harness
-            .query_all_by_label("Schließen")
-            .find(|n| {
-                use egui_kittest::kittest::NodeT;
-                n.accesskit_node().role() == Role::Button
-            })
-            .expect("the close button")
-            .click();
+        crate::app::testkit::click_node(&mut harness, "the close button", |h| {
+            use egui_kittest::kittest::NodeT;
+            h.query_all_by_label("Schließen")
+                .find(|n| n.accesskit_node().role() == Role::Button)
+                .map(crate::app::testkit::id_of)
+        });
         harness.run_steps(4);
         harness.get_by_label(question);
-        harness
-            .get_by_role_and_label(Role::Button, "Verwerfen")
-            .click();
+        click_role(&mut harness, Role::Button, "Verwerfen");
         harness.run_steps(4);
         assert!(harness.query_by_label(question).is_none());
         assert!(harness.query_by_label("Einladungslink oder Code").is_none());
@@ -1577,7 +1580,7 @@ mod tests {
                 .description()
                 .is_some_and(|d| d.starts_with("Moderation, Stammgäste "))
         );
-        trigger.click();
+        click_role(&mut harness, Role::Button, "Zugriff");
         harness.run_steps(4);
         let checked = |h: &egui_kittest::Harness<'_, crate::Launcher>, name: &str| {
             h.get_by_role_and_label(Role::CheckBox, name)
@@ -1588,9 +1591,7 @@ mod tests {
         assert!(!checked(&harness, "Alle Mitglieder"));
         assert!(checked(&harness, "Moderation"));
         assert!(checked(&harness, "Stammgäste"));
-        harness
-            .get_by_role_and_label(Role::CheckBox, "Stammgäste")
-            .click();
+        click_role(&mut harness, Role::CheckBox, "Stammgäste");
         harness.run_steps(4);
         assert!(checked(&harness, "Moderation"));
         assert!(!checked(&harness, "Stammgäste"));
@@ -1605,9 +1606,7 @@ mod tests {
                 .description()
                 .is_some_and(|d| d.starts_with("Moderation "))
         );
-        harness
-            .get_by_role_and_label(Role::Button, "Speichern")
-            .click();
+        click_role(&mut harness, Role::Button, "Speichern");
         let patch = format!("PATCH /channels/{SPIELE}");
         wait_for(&mut harness, "the patch", |_| {
             sent.lock().iter().any(|(r, _)| *r == patch)
@@ -1634,22 +1633,16 @@ mod tests {
                 .type_text(if limit { "geheim" } else { "offen" });
             harness.run_steps(2);
             if limit {
-                harness
-                    .get_by_role_and_label(Role::Button, "Zugriff")
-                    .click();
+                click_role(&mut harness, Role::Button, "Zugriff");
                 harness.run_steps(4);
                 assert!(checked(&harness, "Alle Mitglieder"));
-                harness
-                    .get_by_role_and_label(Role::CheckBox, "Moderation")
-                    .click();
+                click_role(&mut harness, Role::CheckBox, "Moderation");
                 harness.run_steps(4);
                 assert!(!checked(&harness, "Alle Mitglieder"));
                 harness.key_press(egui::Key::Escape);
                 harness.run_steps(4);
             }
-            harness
-                .get_by_role_and_label(Role::Button, "Erstellen")
-                .click();
+            click_role(&mut harness, Role::Button, "Erstellen");
             let post = format!("POST /servers/{HOME}/channels");
             let count = if limit { 2 } else { 1 };
             wait_for(&mut harness, "the create", |_| {

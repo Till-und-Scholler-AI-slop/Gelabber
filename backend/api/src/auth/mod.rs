@@ -114,7 +114,9 @@ pub struct RegisterBody {
     #[serde(default)]
     pub name: String,
     /// `de` or `en`; without it the `Accept-Language` header decides, and
-    /// without that German (clients older than v0.10).
+    /// without that German: the API's default, as for the OIDC sign-up. The
+    /// web client and the app always send it; scripts and the tests' own
+    /// client leave it out.
     #[serde(default)]
     pub locale: Option<String>,
     /// A beta invitation's code (`operator::admission`); only an
@@ -402,7 +404,7 @@ fn send_mail(
     outgoing: Outgoing,
 ) {
     let (state, mailer, email) = (state.clone(), mailer.clone(), email.to_owned());
-    tokio::spawn(async move {
+    mailer.clone().spawn(async move {
         let mail = match outgoing {
             Outgoing::Confirm => tokens::issue(&state.db, user_id, Purpose::VerifyEmail)
                 .await
@@ -459,7 +461,7 @@ pub fn send_mail_to(
         return;
     };
     let (state, address) = (state.clone(), address.to_owned());
-    tokio::spawn(async move {
+    mailer.clone().spawn(async move {
         let kind = mail.kind();
         match mailer.send(&address, &mail, locale).await {
             Ok(()) => info!(kind, "mail sent"),

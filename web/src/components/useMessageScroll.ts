@@ -18,6 +18,7 @@ import {
 } from "react";
 
 import {
+  AT_END,
   endDistance,
   scrollEndIntent,
   type ScrollPosition,
@@ -68,6 +69,15 @@ export function useMessageScroll({
   const contentRef = useRef<HTMLDivElement>(null);
   const lastPosition = useRef<ScrollPosition | null>(null);
   const touchY = useRef<number | null>(null);
+  // A press on the list itself, not a row: its scrollbar (track or thumb).
+  // Scrolls while it lasts, and until they come to rest after the release,
+  // are the reader's moves, whatever the layout did at the same time; a
+  // layout shift raises no pointer event.
+  const scrollbarHeld = useRef(false);
+  // Scroll events seen, so the release can wait until the scroll rests,
+  // and presses made, so only the latest one ends the hold.
+  const scrolls = useRef(0);
+  const presses = useRef(0);
   const lastRequest = useRef(latestRequest);
   // Older history was asked for; its rows are prepended above `pin`.
   const olderAnchor = useRef(false);
@@ -134,7 +144,7 @@ export function useMessageScroll({
           opening.current === "done" &&
           stickToBottom.current &&
           position.viewport > 16 &&
-          endDistance(position) <= 16,
+          endDistance(position) <= AT_END,
       );
     },
     [active, onAtLatest, virtualizer],
@@ -458,11 +468,53 @@ export function useMessageScroll({
         touchY.current = null;
       },
       onPointerDownCapture: (event: PointerEvent<HTMLDivElement>) => {
-        // On the list itself, not a row: its scrollbar.
-        if (event.target === event.currentTarget) release();
+        // The main button on the list itself, not a row: its scrollbar. A
+        // right press opens a context menu, which may take the release.
+        if (event.button !== 0 || event.target !== event.currentTarget) return;
+        release();
+        scrollbarHeld.current = true;
+        const press = ++presses.current;
+        const end = () => {
+          if (presses.current === press) scrollbarHeld.current = false;
+        };
+        const view = event.currentTarget.ownerDocument.defaultView;
+        if (!view) return;
+        const stop = () => {
+          view.removeEventListener("pointerup", done, true);
+          view.removeEventListener("pointercancel", done, true);
+          view.removeEventListener("blur", lost);
+        };
+        // The window lost focus mid-press: no release may ever come.
+        const lost = () => {
+          stop();
+          end();
+        };
+        // A track click animates its jump over several frames after the
+        // release (about nine in Chromium): the press lasts until the list
+        // has had no scroll event for two frames, at most a second.
+        const done = () => {
+          stop();
+          let seen = scrolls.current,
+            quiet = 0,
+            frames = 0;
+          const rest = () => {
+            frames++;
+            if (scrolls.current !== seen) {
+              seen = scrolls.current;
+              quiet = 0;
+            } else quiet++;
+            if (quiet >= 2 || frames >= 60) end();
+            else view.requestAnimationFrame(rest);
+          };
+          view.requestAnimationFrame(rest);
+        };
+        view.addEventListener("pointerup", done, true);
+        view.addEventListener("pointercancel", done, true);
+        view.addEventListener("blur", lost);
       },
       onScrollCapture: (event: UIEvent<HTMLDivElement>) => {
         if (event.target !== event.currentTarget) return;
+        scrolls.current++;
         const element = scrollRef.current;
         if (!element) return;
         // Momentum or a scrollbar drag moved it away from the held anchor.
@@ -476,6 +528,7 @@ export function useMessageScroll({
             height: element.scrollHeight,
             viewport: element.clientHeight,
           },
+          scrollbarHeld.current,
         );
         updateLatest(false);
       },

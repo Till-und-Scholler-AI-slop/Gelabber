@@ -37,7 +37,7 @@ use crate::error::{ApiError, OwnedServer};
 use crate::gateway::{Recheck, delivery};
 use crate::i18n::Locale;
 use crate::mail::Mail;
-use crate::state::AppState;
+use crate::state::{AppState, Worker};
 
 /// How often the worker looks for deleted accounts without being woken.
 pub(crate) const TICK: Duration = Duration::from_secs(2);
@@ -174,7 +174,10 @@ pub fn start(state: AppState) {
     tokio::spawn(async move {
         while !state.db.is_closed() {
             let busy = match purge_pending(&state).await {
-                Ok(purged) => purged > 0,
+                Ok(purged) => {
+                    state.worker_passes.finished(Worker::AccountPurge);
+                    purged > 0
+                }
                 Err(err) => {
                     warn!(error = ?err, "account purge pass failed");
                     false
@@ -350,7 +353,7 @@ pub async fn purge(state: &AppState, user_id: Uuid) -> Result<bool, ApiError> {
     info!(%user_id, "account purged");
 
     if let Some(mailer) = state.mail.clone() {
-        tokio::spawn(async move {
+        mailer.clone().spawn(async move {
             let mail = Mail::AccountDeleted;
             match mailer.send(&email, &mail, locale).await {
                 Ok(()) => info!(%user_id, kind = mail.kind(), "account mail sent"),

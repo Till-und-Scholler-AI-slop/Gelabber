@@ -1,5 +1,5 @@
 # The real app against Postgres, Redis, MinIO and the SFU: the fault matrix in
-# Chromium and Firefox, the core and access scenarios in Chromium, the
+# Chromium and Firefox, the core, media and access scenarios in Chromium, the
 # chat workflows (GEL-31), the PWA smoke and the desktop app's tests against
 # the seeded stack (GEL-376). Not a PR gate (GEL-378): it runs
 # after pushes to a version branch that touch the app, on release and hotfix
@@ -212,7 +212,6 @@ jobs:
         run: node web/scripts/e2e/ci-fault-prepare.mjs
 
       # The faults in both browsers, the scenarios without faults in Chromium.
-      # The media profile joins once its scenarios pass (GEL-378).
       - name: Real app scenarios and faults in both browsers
         run: |
           set -euo pipefail
@@ -220,7 +219,7 @@ jobs:
           for engine in chromium firefox; do
             profiles=(core-faults media-faults)
             if [ "$engine" = chromium ]; then
-              profiles+=(core access)
+              profiles+=(core media access)
             fi
             for profile in "${profiles[@]}"; do
               owned_media_env="$GELABBER_E2E_MEDIA_FAULT_ENV"
@@ -250,43 +249,48 @@ jobs:
           path: /tmp/gelabber-e2e/*.json
           if-no-files-found: warn
 
-      # The chat in a real browser: read state, scoped search, drafts, a
-      # second device, DMs and the composer's file note (GEL-31). Runs even
-      # when a fault run failed, so both results show.
-      - name: Chat workflows acceptance (Chromium)
+      # web/scripts/e2e/server-checks.mjs lists the checks; they run even when a
+      # fault run failed.
+      - name: Browser checks against the API, gateway and SFU
         if: ${{ !cancelled() }}
         env:
           API_ADDR: 127.0.0.1:8080
           MINIO_PUBLIC_ENDPOINT: http://127.0.0.1:9000
-          MINIO_BUCKET: gelabber-chat-workflows
+          MINIO_BUCKET: gelabber-server-checks
           GELABBER_SMOKE_URL: http://127.0.0.1:5174
-          GELABBER_CHAT_REPORT: /tmp/gelabber-chat-workflows
+          GELABBER_SERVER_CHECKS_REPORT: /tmp/gelabber-server-checks
         run: |
           set -euo pipefail
-          backend/target/debug/gelabber-api >/tmp/gelabber-chat-api.log 2>&1 &
+          backend/target/debug/gelabber-api >/tmp/gelabber-checks-api.log 2>&1 &
           api=$!
+          # Native ICE needs an address that is not loopback, as for the fault runs.
+          ip="$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -n 1)"
+          MEDIA_ADDR=127.0.0.1:8081 MEDIA_ICE_BIND="$ip:0" MEDIA_ADVERTISED_IP="$ip" \
+            backend/target/debug/gelabber-media >/tmp/gelabber-checks-media.log 2>&1 &
+          media=$!
           (cd web && exec node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5174 --strictPort) \
-            >/tmp/gelabber-chat-vite.log 2>&1 &
+            >/tmp/gelabber-checks-vite.log 2>&1 &
           vite=$!
-          trap 'kill "$api" "$vite" 2>/dev/null || true' EXIT
+          trap 'kill "$api" "$media" "$vite" 2>/dev/null || true' EXIT
           deadline=$((SECONDS + 120))
           until curl -fsS http://127.0.0.1:8080/ready >/dev/null \
+            && curl -fsS http://127.0.0.1:8081/ready >/dev/null \
             && curl -fsS "$GELABBER_SMOKE_URL/" >/dev/null; do
             if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "API or Vite did not come up within 120s"
-              tail -n 50 /tmp/gelabber-chat-api.log /tmp/gelabber-chat-vite.log
+              echo "API, SFU or Vite did not come up within 120s"
+              tail -n 50 /tmp/gelabber-checks-api.log /tmp/gelabber-checks-media.log /tmp/gelabber-checks-vite.log
               exit 1
             fi
             sleep 2
           done
-          npm run --prefix web test:e2e-chat-workflows
+          npm run --prefix web test:e2e-server
 
-      - name: Upload chat workflows screenshots and report
+      - name: Upload the browser checks' screenshots and reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: chat-workflows
-          path: /tmp/gelabber-chat-workflows/
+          name: server-checks
+          path: /tmp/gelabber-server-checks/
           if-no-files-found: warn
 
       # The service worker, manifest and install flow against the production
@@ -613,9 +617,6 @@ jobs:
         if: always()
         run: docker rm -f gelabber-desktop-minio || true
 
-  # Who looks at a red push run: an open issue per branch, which the Linear
-  # sync brings to the team; the next green push run closes it. Pull requests
-  # show their result themselves, runs by hand serve debug branches.
   # The run's outcome from its jobs (scripts/e2e_jobs.py): a timed-out job
   # fails it, a skipped one leaves it open. Read-only, so every run shows it.
   outcome:
@@ -643,6 +644,9 @@ jobs:
           echo "result=$(python3 .github/workflows/scripts/e2e_jobs.py result "$PLAN" "$FAULTS" "$DESKTOP")" \
             | tee -a "$GITHUB_OUTPUT"
 
+  # Who looks at a red push run: an open issue per branch, which the Linear
+  # sync brings to the team; the next green push run closes it. Pull requests
+  # show their result themselves, runs by hand serve debug branches.
   report:
     name: Issue for the push run's result
     needs: outcome

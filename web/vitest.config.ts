@@ -5,17 +5,17 @@ import { configDefaults, defineConfig } from "vitest/config";
 // real focus, keys, clicks and layout; everything else runs in node.
 const BROWSER_TESTS = "src/**/*.browser.test.tsx";
 
+// The node project, also the one Stryker runs (vitest.mutation.config.ts).
+export const NODE_TESTS = {
+  name: "node",
+  environment: "node" as const,
+  exclude: [...configDefaults.exclude, BROWSER_TESTS],
+};
+
 export default defineConfig({
   test: {
     projects: [
-      {
-        extends: true,
-        test: {
-          name: "node",
-          environment: "node",
-          exclude: [...configDefaults.exclude, BROWSER_TESTS],
-        },
-      },
+      { extends: true, test: NODE_TESTS },
       {
         extends: true,
         test: {

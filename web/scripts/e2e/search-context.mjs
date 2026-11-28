@@ -1,10 +1,14 @@
-/* global process, document, sessionStorage, Event, console, setTimeout, Buffer */
+/* global process, document, sessionStorage, Event, console, setTimeout, Buffer, requestAnimationFrame, MessageChannel */
 // Local browser integration for scoped search navigation; no physical-device claim.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { chromium } from "playwright";
 import { api, until, safeTarget } from "./harness.mjs";
+import { settle } from "./expected-failures.mjs";
+
+// Known failures, each under the issue that ends it (expected-failures.mjs).
+const EXPECTED_FAILURES = {};
 const base = safeTarget(
   process.env.GELABBER_SMOKE_URL ?? "http://127.0.0.1:5174",
 );
@@ -16,7 +20,33 @@ const contexts = [];
 const suffix = randomBytes(6).toString("hex");
 const password = randomBytes(20).toString("base64url");
 const checks = [];
+const failures = [];
 let server, owner, memberDebug;
+/** The top row of the chat's list and its offset, once it holds still. */
+const place = (page) =>
+  page.locator('[role="log"]').evaluate(async (el) => {
+    let still = 0;
+    let last = el.scrollTop;
+    // At most 2 s of frames; a place that never held does not compare.
+    for (let frame = 0; still < 5 && frame < 120; frame++) {
+      await new Promise(requestAnimationFrame);
+      still = el.scrollTop === last ? still + 1 : 0;
+      last = el.scrollTop;
+    }
+    if (still < 5) return { held: false, top: el.scrollTop };
+    const box = el.getBoundingClientRect();
+    const top = [...el.querySelectorAll("[data-index]")]
+      .map((row) => ({ row, rect: row.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.bottom > box.top + 1)
+      .sort((a, b) => a.rect.top - b.rect.top)[0];
+    return top
+      ? {
+          held: true,
+          first: top.row.querySelector(".lr-message-text")?.textContent ?? "",
+          offset: Math.round(top.rect.top - box.top),
+        }
+      : null;
+  });
 const check = async (name, run) => {
   try {
     await run();
@@ -53,13 +83,20 @@ const check = async (name, run) => {
           2,
         ),
       );
-    throw error;
+    // The next checks still run; settle() at the end decides.
+    failures.push({ name, message: error.message });
+    console.log(`FAIL ${name}: ${error.message}`);
+    return;
   }
   checks.push(name);
   console.log(`PASS ${name}`);
 };
 async function actor(label, credentials) {
-  const context = await browser.newContext({ hasTouch: true });
+  // The labels below are German; the app follows the browser's language.
+  const context = await browser.newContext({
+    hasTouch: true,
+    locale: "de-DE",
+  });
   contexts.push(context);
   const page = await context.newPage();
   const frames = [];
@@ -192,42 +229,90 @@ try {
       mimeType: "text/plain",
       buffer: Buffer.from("unsent"),
     });
-  // Establish real history-reading intent after row and composer measurement.
-  // The phone viewport below is 64px taller and clamps this small gap to end;
-  // that geometry change must not turn an upward wheel into a read of latest.
-  await new Promise((r) => setTimeout(r, 500));
-  const logBox = await log.boundingBox();
-  assert.ok(logBox);
-  await member.page.mouse.move(
-    logBox.x + logBox.width / 2,
-    logBox.y + logBox.height / 2,
-  );
-  await log.evaluate((el) => {
-    el.scrollTop = el.scrollHeight;
-  });
+  // Establish real history-reading intent once rows and composer are
+  // measured: the draft's file chip makes the composer taller and the list
+  // shorter, so the list is placed only after it is drawn and the list holds
+  // still. The phone viewport below is 64px taller and clamps this small gap
+  // to end; that geometry change must not turn an upward scroll into a read
+  // of latest.
+  await member.page
+    .locator("form")
+    .last()
+    .getByText("context-draft.txt", { exact: true })
+    .waitFor();
+  // Places the list `offset` px from its end, waits until its height, visible
+  // height and position hold for 5 frames, and reads where it stands.
+  const settleList = (offsetFromEnd) =>
+    log.evaluate(async (el, offset) => {
+      const state = () => [el.scrollHeight, el.clientHeight, el.scrollTop];
+      let still = 0;
+      let last = state();
+      // The composer may still be growing or shrinking (its animation) when
+      // the list is placed: a list the app left where it was put, whose gap
+      // the layout changed around it, is placed again, at most three times.
+      // A list the app moved is not, and fails where it is used. A move down
+      // that ends near the end is the reader coming back to it (the list
+      // pins), so a place below the current one is reached as the first
+      // was: from the end, upwards.
+      // Writes leave the animation frame first: a scroll written inside
+      // one has its event after that frame's ResizeObserver, which records
+      // the new position first, so the list would see no move.
+      const task = () =>
+        new Promise((resolve) => {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = resolve;
+          channel.port2.postMessage(0);
+        });
+      for (let placement = 0; placement < 3; placement++) {
+        if (placement > 0) {
+          await task();
+          if (el.scrollHeight - el.clientHeight - offset > el.scrollTop) {
+            el.scrollTop = el.scrollHeight;
+            await new Promise(requestAnimationFrame);
+            await new Promise(requestAnimationFrame);
+            await task();
+          }
+        }
+        el.scrollTop = el.scrollHeight - el.clientHeight - offset;
+        const placed = el.scrollTop;
+        still = 0;
+        last = state();
+        // At most 2 s of frames: a list that never holds says so.
+        for (let frame = 0; still < 5 && frame < 120; frame++) {
+          await new Promise(requestAnimationFrame);
+          const now = state();
+          still = now.every((v, i) => v === last[i]) ? still + 1 : 0;
+          last = now;
+        }
+        const [height, visible, top] = last;
+        if (top !== placed || Math.abs(height - top - visible - offset) <= 2)
+          break;
+      }
+      const [height, visible, top] = last;
+      return {
+        held: still >= 5,
+        height,
+        visible,
+        top,
+        gap: height - top - visible,
+      };
+    }, offsetFromEnd);
   await until(
-    () =>
-      log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
-    (distance) => distance <= 16,
+    () => settleList(0),
+    (state) => state.held && state.gap <= 1,
     "canonical-end-before-native-up",
   );
-  await new Promise((r) => setTimeout(r, 500));
-  await member.page.mouse.wheel(0, -25);
-  await until(
-    () =>
-      log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
-    (distance) => distance > 16 && distance < 64,
-    "history-wheel-before-search",
-  );
-  await new Promise((r) => setTimeout(r, 300));
-  const historyGap = await log.evaluate(
-    (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
-  );
+  // The reader leaves the end with a plain move, as a scrollbar does: a
+  // wheel moves 25 px here and 85 to 105 px on a CI runner, too far for this
+  // place. The list must stay where the move put it, also when its height
+  // changed at the same time (GEL-461).
+  const leaveEnd = (offset) => settleList(offset);
+  // One move, no retry: a list pulled back to its end fails here.
+  const near = await leaveEnd(40);
   assert.ok(
-    historyGap > 16 && historyGap < 64,
-    `fixture must be reading near-end history before search, gap=${historyGap}`,
+    near.held && near.gap > 16 && near.gap < 64,
+    `history-place-before-search: ${JSON.stringify(near)}`,
   );
-  const beforeScroll = await log.evaluate((el) => el.scrollTop);
   const beforeUnread = (await channelState(member, channel)).unread_count;
   const search = async (value) => {
     // Typing filters in place (#377); there is no submit button.
@@ -383,11 +468,6 @@ try {
       await member.page
         .getByText("context-draft.txt", { exact: true })
         .waitFor();
-      const afterScroll = await log.evaluate((el) => el.scrollTop);
-      assert.ok(
-        Math.abs(afterScroll - beforeScroll) < 100,
-        `history scroll was changed ${beforeScroll}->${afterScroll}`,
-      );
       await new Promise((r) => setTimeout(r, 900));
       assert.equal(
         (await channelState(member, channel)).unread_count,
@@ -395,6 +475,51 @@ try {
       );
     },
   );
+  // A reader in the history opens a search result's context and comes back:
+  // the chat shows the same rows, the top one at the same height. At one
+  // window size: a change of size moves the rows by design.
+  await check("returning to the chat keeps the reader's place", async () => {
+    const marker = `${needle} place`;
+    await send(owner, channel, marker);
+    await member.page.getByText(marker, { exact: true }).waitFor();
+    // Up from the end, as a reader leaves it, and really in the history:
+    // a list pulled back to its end would make the check below pass on
+    // nothing (GEL-461).
+    const away = await leaveEnd(200);
+    assert.ok(
+      away.held && away.gap > 150,
+      `place-reader-not-in-history: ${JSON.stringify(away)}`,
+    );
+    const before = await place(member.page);
+    await search(marker);
+    await member.page
+      .getByRole("button", {
+        name: `Zur Nachricht von Chat owner: ${marker}`,
+        exact: true,
+      })
+      .click();
+    await contextRegion().locator("[data-message-id]").first().waitFor();
+    await contextRegion()
+      .getByRole("button", { name: "Zurück zu den Treffern" })
+      .click();
+    await member.page
+      .getByRole("button", { name: "Zurück zum Chat", exact: true })
+      .click();
+    await log.waitFor();
+    const kept = (now, when) =>
+      assert.ok(
+        before?.held &&
+          now?.held &&
+          now.first === before.first &&
+          Math.abs(now.offset - before.offset) <= 2,
+        `the top row was ${before?.first} at ${before?.offset} px, is ${now?.first} at ${now?.offset} px ${when}${before?.held && now?.held ? "" : " (the list never held still)"}`,
+      );
+    kept(await place(member.page), "on return");
+    // A jump after a refetch or a debounce comes later than the list's
+    // first rest: the same window the read checks above wait for.
+    await new Promise((r) => setTimeout(r, 900));
+    kept(await place(member.page), "900 ms later");
+  });
   const cancelTarget = await send(
     owner,
     channel,
@@ -442,14 +567,17 @@ try {
     "changing chat cancels private context and keeps drafts",
     async () => {
       const release = await beginBlocked();
-      const canceled = member.page.waitForEvent("requestfailed", {
-        predicate: (r) => r.url().endsWith(`/${cancelTarget.id}/context`),
-      });
-      await member.page
-        .locator(`.channel-sidebar a[href="${other}"]`)
-        .first()
-        .click();
-      await canceled;
+      // The waiter and its action together, so a failed action leaves no
+      // waiter to reject unheard (as responseTo in harness.mjs).
+      await Promise.all([
+        member.page.waitForEvent("requestfailed", {
+          predicate: (r) => r.url().endsWith(`/${cancelTarget.id}/context`),
+        }),
+        member.page
+          .locator(`.channel-sidebar a[href="${other}"]`)
+          .first()
+          .click(),
+      ]);
       await release();
       assert.equal(await contextRegion().count(), 0);
       assert.equal(
@@ -472,15 +600,18 @@ try {
     "account replacement cancels the private request and releases drafts",
     async () => {
       const release = await beginBlocked();
-      const canceled = member.page.waitForEvent("requestfailed", {
-        predicate: (r) => r.url().endsWith(`/${cancelTarget.id}/context`),
-      });
-      await member.page.locator(".user-panel-profile").first().click();
-      await member.page
-        .getByRole("menuitem", { name: "Abmelden", exact: true })
-        .click();
-      await member.page.waitForURL((url) => url.pathname === "/login");
-      await canceled;
+      await Promise.all([
+        member.page.waitForEvent("requestfailed", {
+          predicate: (r) => r.url().endsWith(`/${cancelTarget.id}/context`),
+        }),
+        (async () => {
+          await member.page.locator(".user-panel-profile").first().click();
+          await member.page
+            .getByRole("menuitem", { name: "Abmelden", exact: true })
+            .click();
+          await member.page.waitForURL((url) => url.pathname === "/login");
+        })(),
+      ]);
       await member.page.getByLabel("E-Mail-Adresse").fill(replacement.email);
       await member.page.getByLabel("Passwort", { exact: true }).fill(password);
       await member.page
@@ -515,6 +646,7 @@ try {
     JSON.stringify(
       {
         checks,
+        failures,
         browser: "Chromium",
         mobileViewport: "390x844",
         physicalDeviceAcceptance: false,
@@ -525,3 +657,7 @@ try {
     ),
   );
 }
+assert.deepEqual(
+  settle(EXPECTED_FAILURES, { passed: checks, failed: failures }),
+  [],
+);

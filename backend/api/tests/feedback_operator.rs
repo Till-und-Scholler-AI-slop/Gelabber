@@ -500,6 +500,7 @@ async fn replies_mark_the_entry_unread_once_and_track_who_spoke_last(pool: PgPoo
 
     let res = operator_reply(&mut lena, id, "Noch etwas").await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let newest = res.body["id"].clone();
     assert_eq!(
         unread_since(&pool, id).await,
         Some(first),
@@ -517,7 +518,11 @@ async fn replies_mark_the_entry_unread_once_and_track_who_spoke_last(pool: PgPoo
     // The person reads and answers: the mark is gone, and the last word is
     // theirs again.
     let res = tom
-        .send(Method::POST, &format!("/api/feedback/{id}/read"), None)
+        .send(
+            Method::POST,
+            &format!("/api/feedback/{id}/read"),
+            Some(json!({ "through": newest })),
+        )
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT);
     let res = tom
@@ -828,17 +833,10 @@ fn moved(client: &Client, state: &AppState) -> Client {
     moved
 }
 
-/// Mails go out in the background; wait until `count` have been taken,
-/// then a little longer so that one too many would show.
+/// Mails go out in the background: once every mail task has ended,
+/// exactly `count` went out.
 async fn mails(mailer: &Mailer, count: usize) -> Vec<Sent> {
-    for _ in 0..200 {
-        if mailer.outbox().len() >= count {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let sent = mailer.outbox();
+    let sent = common::settled_mails(mailer).await;
     assert_eq!(sent.len(), count, "{sent:?}");
     sent
 }
@@ -929,7 +927,7 @@ async fn the_answer_mail_goes_once_per_unread_stretch(pool: PgPool) {
 
     let toms = account_entry(&pool, Some(uid(&tom)), "idea", "open", 0).await;
     reply_as(&mut lena, toms, "Danke").await;
-    reply_as(&mut lena, toms, "Und noch etwas").await;
+    let newest = reply_as(&mut lena, toms, "Und noch etwas").await["id"].clone();
     let sent = mails(&mailer, 1).await;
     assert_eq!(sent[0].to, "tom@example.test");
     assert_eq!(sent[0].subject, "Reply to your feedback");
@@ -945,7 +943,11 @@ async fn the_answer_mail_goes_once_per_unread_stretch(pool: PgPool) {
     // Once Tom has read it, the next reply mails again.
     let mut tom = moved(&tom, &state);
     let res = tom
-        .send(Method::POST, &format!("/api/feedback/{toms}/read"), None)
+        .send(
+            Method::POST,
+            &format!("/api/feedback/{toms}/read"),
+            Some(json!({ "through": newest })),
+        )
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
     reply_as(&mut lena, toms, "Erledigt").await;

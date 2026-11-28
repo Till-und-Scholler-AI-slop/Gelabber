@@ -58,11 +58,28 @@ async fn left(sub: &mut redis::aio::PubSub, m: bool, d: bool) {
     let set = next(sub).await;
     assert_eq!((set.t, set.w), (SigKind::W, Some(Vec::new())));
 }
-async fn quiet(sub: &mut redis::aio::PubSub) {
-    assert!(
-        tokio::time::timeout(Duration::from_millis(150), sub.on_message().next())
-            .await
-            .is_err(),
+/// Nothing more on room `c`'s channel: a marker published now comes next.
+/// Redis hands a subscriber the messages in the order it ran their
+/// PUBLISH, and the gateway published before its call returned.
+async fn quiet(sub: &mut redis::aio::PubSub, c: Uuid) {
+    let mut conn = redis::Client::open(std::env::var("REDIS_URL").unwrap())
+        .unwrap()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let _: i64 = redis::cmd("PUBLISH")
+        .arg(format!("gb:v:{c}"))
+        .arg("marker")
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let msg = tokio::time::timeout(Duration::from_secs(5), sub.on_message().next())
+        .await
+        .expect("the marker arrives")
+        .unwrap();
+    assert_eq!(
+        msg.get_payload::<String>().unwrap(),
+        "marker",
         "no false global unpublish/leave"
     );
 }
@@ -131,10 +148,10 @@ async fn stale_refresh_and_leave_do_not_unpublish_same_user_replacement_screen()
     let started = next(&mut sub).await;
     assert_eq!((started.t, started.k), (SigKind::P, Some(TrackKind::S)));
     old_api.refresh_voice(old).await.unwrap();
-    quiet(&mut sub).await;
+    quiet(&mut sub, c).await;
     old_api.leave_voice(old, u, s, c).await.unwrap();
     left(&mut sub, false, false).await;
-    quiet(&mut sub).await;
+    quiet(&mut sub, c).await;
     assert!(new_api.voice_snapshot(s).await.unwrap()[0].s);
     old_api.detach(old).await;
     new_api.detach(new).await;
@@ -160,10 +177,10 @@ async fn unpublish_and_leave_keep_another_seats_camera_publication() {
     g.set_voice_pub(a, u, s, c, TrackKind::V, false)
         .await
         .unwrap();
-    quiet(&mut sub).await;
+    quiet(&mut sub, c).await;
     g.leave_voice(a, u, s, c).await.unwrap();
     left(&mut sub, false, false).await;
-    quiet(&mut sub).await;
+    quiet(&mut sub, c).await;
     g.set_voice_pub(b, u, s, c, TrackKind::V, false)
         .await
         .unwrap();
@@ -201,10 +218,10 @@ async fn stale_audio_refresh_preserves_same_user_replacement_screen_audio() {
         assert_eq!((event.t, event.k), (SigKind::P, Some(kind)));
     }
     old_api.refresh_voice(old).await.unwrap();
-    quiet(&mut sub).await;
+    quiet(&mut sub, c).await;
     old_api.leave_voice(old, u, s, c).await.unwrap();
     left(&mut sub, false, false).await;
-    quiet(&mut sub).await;
+    quiet(&mut sub, c).await;
     let (observer_tx, _observer_rx) = mpsc::channel::<ServerFrame>(128);
     let observer_user = Uuid::new_v4();
     let (observer, _) = new_api

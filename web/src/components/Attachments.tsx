@@ -28,7 +28,6 @@ import {
   TEXT_PREVIEW_MAX,
 } from "../messages/rules.ts";
 import type { Attachment } from "../messages/types.ts";
-import { asAttachmentList } from "../messages/types.ts";
 import { translate, useT } from "../i18n/catalog.ts";
 import { AltTextDialog } from "./AltTextDialog.tsx";
 import { notifyError } from "./toasts.ts";
@@ -60,10 +59,9 @@ export function AttachmentList({
   editAlt?: AltTextTarget;
 }) {
   const [editing, setEditing] = useState<Attachment | null>(null);
-  const files = asAttachmentList(attachments);
-  if (files.length === 0) return null;
-  const images = files.filter((a) => isImageType(a.content_type));
-  const others = files.filter((a) => !isImageType(a.content_type));
+  if (attachments.length === 0) return null;
+  const images = attachments.filter((a) => isImageType(a.content_type));
+  const others = attachments.filter((a) => !isImageType(a.content_type));
   return (
     <div className="lr-attachments">
       {images.length > 0 ? (

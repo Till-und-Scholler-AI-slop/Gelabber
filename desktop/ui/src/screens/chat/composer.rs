@@ -1075,13 +1075,10 @@ mod tests {
 
     /// Steps until the files being read are in.
     fn loaded(harness: &mut egui_kittest::Harness<'_>, state: &std::cell::RefCell<ComposerState>) {
-        for _ in 0..300 {
+        crate::app::testkit::eventually("the files", || {
             harness.step();
-            if state.borrow().loading.is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+            state.borrow().loading.is_empty()
+        });
         harness.run_steps(2);
     }
 

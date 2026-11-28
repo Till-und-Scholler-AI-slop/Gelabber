@@ -250,6 +250,9 @@ impl Sfu {
                     return Err(SfuError::Forbidden);
                 }
                 peer.attach_failures.store(0, Ordering::Relaxed);
+                // Until it has a layer, the SFU asks for bitrate rounds itself
+                // (layers.rs, GEL-460).
+                self.await_layer(&room.engine, &s);
                 self.emit(
                     &peer,
                     ServerFrame::ConsumerState {
@@ -295,8 +298,6 @@ impl Sfu {
                 self.set_watch(channel, &room, &peer, u, k, on).await?;
                 Ok(json!({}))
             }
-            // Older clients still send tile sizes; consumers start on the top
-            // layer and mediasoup's estimate steps down, so they are ignored.
             ClientFrame::ScreenMode {
                 producer_id, sharp, ..
             } => {
@@ -326,7 +327,6 @@ impl Sfu {
                 }
                 Ok(json!({}))
             }
-            ClientFrame::ViewerLayer { .. } => Ok(json!({})),
             ClientFrame::Leave { .. } => {
                 self.leave(id, channel).await;
                 Ok(json!({}))

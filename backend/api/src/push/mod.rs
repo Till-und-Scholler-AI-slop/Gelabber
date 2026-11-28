@@ -112,6 +112,25 @@ pub struct Push {
     pruned_at: std::sync::Arc<std::sync::atomic::AtomicI64>,
     /// The [`last_call`] worker runs once per process.
     last_call_started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Recalls spawned and not yet ended: they take a delivery slot only
+    /// after reading their receipts ([`recall`]).
+    recalls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// One recall in [`Push::recalls`], taken back when its task ends.
+struct Recalling(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Recalling {
+    fn start(recalls: &std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        recalls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(recalls.clone())
+    }
+}
+
+impl Drop for Recalling {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl Push {
@@ -125,7 +144,8 @@ impl Push {
         ]
         .iter()
         .map(|deliveries| MAX_DELIVERIES - deliveries.available_permits())
-        .sum()
+        .sum::<usize>()
+            + self.recalls.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn new(config: &PushConfig) -> Result<Self, String> {
@@ -144,6 +164,7 @@ impl Push {
             channel_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
             pruned_at: Default::default(),
             last_call_started: Default::default(),
+            recalls: Default::default(),
         })
     }
 
@@ -299,7 +320,6 @@ async fn unsubscribe(
 
 /// What a push is about: the fields the page puts on its own notifications,
 /// so taps and dedupe work alike (`web/public/sw.js`).
-#[derive(Serialize)]
 struct Payload<'a> {
     title: &'a str,
     body: &'a str,
@@ -309,7 +329,6 @@ struct Payload<'a> {
     message: Uuid,
     at: chrono::DateTime<chrono::Utc>,
     /// The message was deleted: its notification goes, whatever it said.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     recall: bool,
 }
 
@@ -322,18 +341,14 @@ impl Payload<'_> {
     /// subscription is lost over a push that showed nothing. Every other
     /// browser hands the worker the JSON as before.
     ///
-    /// `navigate` is where a tap leads when no worker answers it. The fields
-    /// of the payload stand at the top level too: a worker installed before
-    /// v0.12 reads them there, and stays in charge until its app is opened
-    /// again.
+    /// `navigate` is where a tap leads when no worker answers it. The worker
+    /// reads the payload under `notification` as well.
     fn encode(&self, navigate: &str, locale: Locale) -> serde_json::Result<Vec<u8>> {
         #[derive(Serialize)]
         struct Message<'a> {
             web_push: u16,
             notification: Declared<'a>,
             mutable: bool,
-            #[serde(flatten)]
-            payload: &'a Payload<'a>,
         }
         #[derive(Serialize)]
         struct Declared<'a> {
@@ -379,7 +394,6 @@ impl Payload<'_> {
                 },
             },
             mutable: true,
-            payload: self,
         })
     }
 }
@@ -854,7 +868,9 @@ pub fn recall(state: &AppState, message: &Message, server: Option<Uuid>) {
     };
     let state = state.clone();
     let message = message.clone();
+    let recalling = Recalling::start(&push.recalls);
     tokio::spawn(async move {
+        let _recalling = recalling;
         let targets = match take_receipts(&state, message.id).await {
             Ok(targets) if targets.is_empty() => return,
             Ok(targets) => targets,

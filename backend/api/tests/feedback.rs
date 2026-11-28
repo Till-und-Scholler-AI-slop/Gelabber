@@ -5,7 +5,6 @@ mod common;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
 use gelabber_api::image_size::fixtures;
@@ -103,21 +102,21 @@ async fn create(client: &mut Client, body: Value) -> Value {
     res.body
 }
 
-/// An operator reply as the operator routes will write it.
-async fn operator_reply(pool: &PgPool, id: &str, text: &str) {
-    let id = Uuid::parse_str(id).unwrap();
-    // One statement, so the message and the unread mark share `now()`.
-    sqlx::query(
-        "WITH message AS (INSERT INTO feedback_messages (feedback_id, author_kind, body) \
-         VALUES ($1, 'operator', $2)) \
-         UPDATE feedback SET last_activity_at = now(), \
-         person_unread_since = COALESCE(person_unread_since, now()) WHERE id = $1",
-    )
-    .bind(id)
-    .bind(text)
-    .execute(pool)
-    .await
-    .unwrap();
+/// Lena, the operator of `feedback_state`.
+async fn operator(state: &AppState) -> Client {
+    signed_in(state, "lena@example.test").await
+}
+
+/// An operator reply through the operator route.
+async fn operator_reply(lena: &mut Client, id: &str, text: &str) {
+    let res = lena
+        .send(
+            Method::POST,
+            &format!("/api/operator/feedback/{id}/messages"),
+            Some(json!({ "text": text })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
 }
 
 /// A visitor's entry from the public form, not confirmed yet.
@@ -501,7 +500,7 @@ async fn the_list_holds_own_entries_newest_activity_first(pool: PgPool) {
         .fetch_one(&pool)
         .await
         .unwrap();
-    operator_reply(&pool, &oldest.to_string(), "Danke!").await;
+    operator_reply(&mut operator(&state).await, &oldest.to_string(), "Danke!").await;
     let res = ada.send(Method::GET, "/api/feedback?offset=20", None).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     let texts: Vec<&str> = res.body["entries"]
@@ -540,7 +539,7 @@ async fn replies_build_the_thread_and_reopen_a_done_entry(pool: PgPool) {
     let id = created["id"].as_str().unwrap().to_owned();
     let uuid = Uuid::parse_str(&id).unwrap();
 
-    operator_reply(&pool, &id, "Was genau?").await;
+    operator_reply(&mut operator(&state).await, &id, "Was genau?").await;
     sqlx::query("UPDATE feedback SET status = 'done', done_at = now() WHERE id = $1")
         .bind(uuid)
         .execute(&pool)
@@ -662,16 +661,24 @@ async fn reading_clears_unread(pool: PgPool) {
         .as_str()
         .unwrap()
         .to_owned();
-    operator_reply(&pool, &id, "Eins").await;
-    operator_reply(&pool, &id, "Zwei").await;
+    let mut lena = operator(&state).await;
+    operator_reply(&mut lena, &id, "Eins").await;
+    operator_reply(&mut lena, &id, "Zwei").await;
     let res = ada.send(Method::GET, "/api/feedback/status", None).await;
     assert_eq!(res.body, json!({ "enabled": true, "unread": 1 }));
 
+    let shown = ada.send(Method::GET, "/api/feedback", None).await.body;
+    let newest = shown["entries"][0]["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    let through = json!({ "through": newest["id"] });
     let path = format!("/api/feedback/{id}/read");
-    let res = tom.send(Method::POST, &path, None).await;
+    let res = tom.send(Method::POST, &path, Some(through.clone())).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
-    let res = ada.send(Method::POST, &path, None).await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let res = ada.send(Method::POST, &path, Some(through.clone())).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
     let res = ada.send(Method::GET, "/api/feedback/status", None).await;
     assert_eq!(res.body["unread"], 0);
     let res = ada.send(Method::GET, "/api/feedback", None).await;
@@ -688,7 +695,7 @@ async fn reading_clears_unread(pool: PgPool) {
         .send(
             Method::POST,
             &format!("/api/feedback/{}/read", Uuid::new_v4()),
-            None,
+            Some(through),
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
@@ -730,17 +737,10 @@ async fn the_image_is_served_to_its_owner_only(pool: PgPool) {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-/// Mails go out in the background; wait until `count` have been taken,
-/// then a little longer so that one too many would show.
+/// Mails go out in the background: once every mail task has ended,
+/// exactly `count` went out.
 async fn mails(mailer: &Mailer, count: usize) -> Vec<Sent> {
-    for _ in 0..200 {
-        if mailer.outbox().len() >= count {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let sent = mailer.outbox();
+    let sent = common::settled_mails(mailer).await;
     assert_eq!(sent.len(), count, "{sent:?}");
     sent
 }
@@ -894,17 +894,24 @@ async fn a_read_keeps_replies_the_list_never_held(pool: PgPool) {
         .as_str()
         .unwrap()
         .to_owned();
-    operator_reply(&pool, &id, "Eins").await;
-    operator_reply(&pool, &other, "Fremd").await;
+    let mut lena = operator(&state).await;
+    operator_reply(&mut lena, &id, "Eins").await;
+    operator_reply(&mut lena, &other, "Fremd").await;
     let shown = ada.send(Method::GET, "/api/feedback", None).await.body;
     let seen = shown["entries"][0]["messages"][0]["id"]
         .as_str()
         .unwrap()
         .to_owned();
     // A reply lands between the list and the read call.
-    operator_reply(&pool, &id, "Zwei").await;
+    operator_reply(&mut lena, &id, "Zwei").await;
 
     let path = format!("/api/feedback/{id}/read");
+    // What was seen is named: without it nothing is read.
+    for body in [None, Some(json!({}))] {
+        let res = ada.send(Method::POST, &path, body).await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+        assert_eq!(res.body["fields"], json!({ "through": "required" }));
+    }
     let res = ada
         .send(Method::POST, &path, Some(json!({ "through": "x" })))
         .await;

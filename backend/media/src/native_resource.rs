@@ -255,6 +255,15 @@ impl NativeConsumer {
     pub async fn resume(&self) -> Result<(), SfuError> {
         self.resource.run(|c| async move { c.resume().await }).await
     }
+    pub fn priority(&self) -> Option<u8> {
+        self.resource.with(Consumer::priority)
+    }
+    /// Its weight in its transport's bitrate rounds; a change asks for one.
+    pub async fn set_priority(&self, priority: u8) -> Result<(), SfuError> {
+        self.resource
+            .run(|c| async move { c.set_priority(priority).await })
+            .await
+    }
     pub async fn confirm_closed(&self) {
         self.resource.close();
         let (id, transport, lost) = (self.id, &self.transport, &self.worker_lost);
@@ -337,7 +346,9 @@ mod tests {
         assert_eq!(failure.unanswered, 0);
     }
 
-    #[tokio::test]
+    /// On a paused clock: the wait runs through five deadlines of virtual
+    /// time at once, and a wait that gave up would have answered by then.
+    #[tokio::test(start_paused = true)]
     async fn unanswered_dumps_never_make_a_close_unconfirmed() {
         let deadline = Duration::from_millis(100);
         let wait = tokio::time::timeout(

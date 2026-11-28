@@ -18,7 +18,11 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::{Outcome, Payload, Target, navigate, send, settle};
-use crate::{error::ApiError, i18n, state::AppState};
+use crate::{
+    error::ApiError,
+    i18n,
+    state::{AppState, Worker},
+};
 
 /// How long before a session's end its subscriptions are told, at most.
 const AHEAD: Duration = Duration::from_secs(48 * 3600);
@@ -174,7 +178,9 @@ pub fn start(state: AppState) {
             if state.db.is_closed() {
                 break;
             }
-            round(&state).await;
+            if round(&state).await {
+                state.worker_passes.finished(Worker::LastCall);
+            }
         }
     });
 }
@@ -182,15 +188,15 @@ pub fn start(state: AppState) {
 /// One round of the worker: sweep steps while each settles a whole batch. A
 /// step that leaves some due again ends the round, and the next round tries
 /// them: with the push service down, the next step would only claim the same
-/// batch again, as fast as the service fails.
-pub async fn round(state: &AppState) {
+/// batch again, as fast as the service fails. False when a step failed.
+pub async fn round(state: &AppState) -> bool {
     loop {
         match sweep(state).await {
             Ok(n) if n as i64 >= SWEEP_BATCH => continue,
-            Ok(_) => break,
+            Ok(_) => return true,
             Err(error) => {
                 warn!(error = error.code(), "last call sweep failed");
-                break;
+                return false;
             }
         }
     }

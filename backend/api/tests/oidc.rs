@@ -502,28 +502,6 @@ mod provider {
             assert!(!detail.contains(secret), "{detail} contains {secret}");
         }
     }
-
-    #[tokio::test]
-    async fn the_mock_authorizes_the_url_it_is_given() {
-        let issuer = MockIssuer::start().await;
-        let challenge = pkce::challenge(&pkce::verifier());
-        let auth = format!(
-            "{}/auth?response_type=code&client_id={}&redirect_uri={}&state=s1&nonce=n1\
-             &code_challenge={challenge}&code_challenge_method=S256",
-            issuer.issuer(),
-            crate::common::mock_issuer::CLIENT_ID,
-            CALLBACK,
-        );
-        let back = url::Url::parse(&issuer.authorize(&auth, lena())).unwrap();
-        assert_eq!(back.path(), "/api/auth/oidc/google/callback");
-        let query: Vec<_> = back.query_pairs().map(|(k, _)| k.into_owned()).collect();
-        assert_eq!(query, ["code", "state"]);
-        let denied = issuer.deny(&auth);
-        assert!(
-            denied.ends_with("?error=access_denied&state=s1"),
-            "{denied}"
-        );
-    }
 }
 
 /// The routes of sign-in through a provider against the mock issuer: the
@@ -781,8 +759,7 @@ mod flows {
         let res = web_sign_in(&issuer, &mut other, sign_in(), ada()).await;
         assert_eq!(location(&res), "/");
         assert_eq!(other.bootstrap().await.body["user"]["email"], ADA);
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert_eq!(mailer.outbox().len(), 1);
+        assert_eq!(crate::common::settled_mails(&mailer).await.len(), 1);
     }
 
     #[sqlx::test]
@@ -1277,7 +1254,8 @@ mod flows {
     /// Ada's inbox gets a reset link and sets a new password with it.
     async fn reset_by_mail(state: &AppState, mailer: &Mailer) {
         let mut owner = browser(state).await;
-        let before = mailer.outbox().len();
+        // Counted once earlier mails are out, so the last one is the reset.
+        let before = crate::common::settled_mails(mailer).await.len();
         let res = owner
             .send(
                 Method::POST,

@@ -89,13 +89,14 @@ async fn setup(pool: PgPool) -> World {
     }
 }
 
-/// A client that knows `d` (#590).
+/// The socket as the web client opens it.
 async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    connect_to(addr, client, "/ws?caps=dnd").await
+    ws::connect_to(addr, "/ws", Some(&client.jar[SESSION]), None).await
 }
 
-async fn connect_to(addr: std::net::SocketAddr, client: &Client, path: &str) -> Ws {
-    ws::connect_to(addr, path, Some(&client.jar[SESSION]), None).await
+/// The socket as the app (and the web client before v0.14.1) opens it.
+async fn connect_app(addr: std::net::SocketAddr, client: &Client) -> Ws {
+    ws::connect_to(addr, "/ws?caps=dnd", Some(&client.jar[SESSION]), None).await
 }
 
 async fn set_mode(client: &mut Client, body: Value) -> Value {
@@ -161,9 +162,10 @@ async fn others_see_the_mode_and_the_own_sockets_hear_it(pool: PgPool) {
     let res = owner.send(Method::GET, "/api/me/presence", None).await;
     assert_eq!(res.body, json!({ "mode": "auto", "until": null }));
 
-    // A socket going idle does not change what others see.
+    // A socket going idle does not change what others see, on the web
+    // (`ada_ws`) and in the app.
     send(&mut bob_ws, json!({ "op": "p", "st": "i" })).await;
-    let mut late = connect(addr, &owner).await;
+    let mut late = connect_app(addr, &owner).await;
     assert_eq!(
         listed(&watch(&mut late, server).await, &bob).as_deref(),
         Some("d")
@@ -200,43 +202,6 @@ async fn others_see_the_mode_and_the_own_sockets_hear_it(pool: PgPool) {
         modes.push(frame["m"].as_str().unwrap().to_owned());
     }
     assert_eq!(modes, ["idle", "invisible", "auto"]);
-}
-
-/// A client from before #590 never hears `d`: Do not disturb reaches it
-/// as online, in snapshots and live.
-#[sqlx::test]
-async fn an_old_client_hears_do_not_disturb_as_online(pool: PgPool) {
-    let World {
-        mut owner,
-        mut member,
-        server,
-        ..
-    } = setup(pool.clone()).await;
-    let bob = member.user_id().to_owned();
-    let addr = serve(pool).await;
-    let mut old = connect_to(addr, &owner, "/ws").await;
-    watch(&mut old, server).await;
-    let mut bob_ws = connect(addr, &member).await;
-    watch(&mut bob_ws, server).await;
-    until_skipping(&mut old, |f| presence_of(&bob)(f) && f["st"] == "o").await;
-
-    // Each change reaches the old client, Do not disturb as online.
-    for (mode, heard) in [("dnd", "o"), ("idle", "i"), ("dnd", "o")] {
-        set_mode(&mut member, json!({ "mode": mode })).await;
-        let (frame, _) = until_skipping(&mut old, presence_of(&bob)).await;
-        assert_eq!(frame["st"], heard, "{mode}: {frame}");
-    }
-    let mut late = connect_to(addr, &owner, "/ws").await;
-    assert_eq!(
-        listed(&watch(&mut late, server).await, &bob).as_deref(),
-        Some("o")
-    );
-    let mut new = connect(addr, &owner).await;
-    assert_eq!(
-        listed(&watch(&mut new, server).await, &bob).as_deref(),
-        Some("d")
-    );
-    let _ = &mut owner;
 }
 
 #[sqlx::test]

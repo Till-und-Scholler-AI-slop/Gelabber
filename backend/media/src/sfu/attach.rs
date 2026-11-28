@@ -274,6 +274,9 @@ impl Sfu {
                 grant: Grant::new(),
                 generation: Uuid::new_v4(),
                 gate: Mutex::new(()),
+                awaiting_layer: AtomicBool::new(false),
+                layer_nudges: AtomicU32::new(0),
+                layer_wait_ended: Notify::new(),
             }))
         }
         .await;

@@ -483,6 +483,8 @@ export function errorMessage(code: ApiErrorCode): string {
     case "bad_request":
     case "internal":
       return translate(auth, "error.internal");
+    case "malformed_answer":
+      return translate(auth, "error.malformedAnswer");
     case "invitation_required":
       return translate(auth, "error.invitationRequired");
     case "invitation_invalid":

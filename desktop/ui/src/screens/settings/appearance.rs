@@ -564,7 +564,7 @@ mod tab_tests {
     use serde_json::json;
 
     use crate::app::testkit::{
-        FakeApi, Reply, focused_label, launcher, lena, wait_for, wait_for_label, workspace,
+        FakeApi, Reply, click, focused_label, launcher, lena, wait_for, wait_for_label, workspace,
     };
     use crate::platform::paths::testing::TempConfig;
 
@@ -593,7 +593,7 @@ mod tab_tests {
         let api = language_api(true);
         let mut harness = launcher(&api, "/settings/darstellung");
         wait_for_label(&mut harness, "Sprache");
-        harness.get_by_label("English").click();
+        click(&mut harness, "English");
         harness.run_steps(2);
         assert_eq!(gelabber_i18n::get(), Locale::En);
         wait_for_label(&mut harness, "Saved.");
@@ -618,7 +618,7 @@ mod tab_tests {
         let api = language_api(false);
         let mut harness = launcher(&api, "/settings/darstellung");
         wait_for_label(&mut harness, "Sprache");
-        harness.get_by_label("English").click();
+        click(&mut harness, "English");
         // The fake server may answer within the click's frames, so the
         // switch itself is not asserted here (see the test above).
         wait_for(&mut harness, "the save", |_| api.saw("PUT /me/locale"));
@@ -654,11 +654,13 @@ mod tab_tests {
         });
         let mut harness = launcher(&api, "/settings/darstellung");
         wait_for_label(&mut harness, "Sprache");
-        harness.get_by_label("English").click();
+        click(&mut harness, "English");
         wait_for(&mut harness, "the save", |_| api.saw("PUT /me/locale"));
         assert_eq!(gelabber_i18n::get(), Locale::En);
         // Another area, in English, while the save is under way.
-        harness.get_by_label("Audio").click();
+        crate::app::testkit::click_now(&mut harness, "Audio", |h| {
+            h.query_by_label("Audio").map(crate::app::testkit::id_of)
+        });
         wait_for(&mut harness, "the Audio area", |h| {
             h.query_by_label("Language").is_none() && h.query_by_label("Audio").is_some()
         });

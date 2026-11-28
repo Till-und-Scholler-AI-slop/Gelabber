@@ -794,9 +794,13 @@ impl SkipLink {
 fn logout_failed(ui: &mut Ui, client: &Client, signed_in: bool) {
     use gelabber_client::OpState;
     let state = client.with_state(|s| s.op("logout").cloned());
-    // A new sign-in ends the old problem, as applySession does.
+    // A new sign-in ends the old problem, as applySession does. The page's
+    // session follows the client's a frame later, so in the frame of the
+    // click it is still signed in: only a sign-in the client has too counts.
     if signed_in {
-        if matches!(state, Some(OpState::Failed(_))) {
+        let client_signed_in =
+            client.with_state(|s| matches!(s.session, gelabber_client::Session::Authenticated(_)));
+        if client_signed_in && matches!(state, Some(OpState::Failed(_))) {
             client.clear_op("logout");
         }
         return;
@@ -1052,30 +1056,69 @@ mod tests {
         );
     }
 
+    /// The click on "Abmelden" runs in a frame whose page session is still
+    /// signed in. A refusal that the client has by the end of that frame
+    /// stays: only a sign-in the client has too ends it (GEL-369).
+    #[test]
+    fn a_refused_logout_outlasts_the_frame_of_its_click() {
+        let client = gelabber_client::Client::new("http://127.0.0.1:9").unwrap();
+        client.fail_op(
+            "logout",
+            gelabber_client::ApiError::Transport("refused".into()),
+        );
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            logout_failed(ui, &client, true);
+        });
+        output.textures_delta.clear();
+        assert!(matches!(
+            client.with_state(|s| s.op("logout").cloned()),
+            Some(gelabber_client::OpState::Failed(_))
+        ));
+    }
+
+    /// A sign-in the client has too ends a failed logout, as applySession
+    /// does.
+    #[test]
+    fn a_new_sign_in_ends_a_failed_logout() {
+        use testkit::FakeApi;
+        let api = FakeApi::start(true, |_, _, _| None);
+        let client = gelabber_client::Client::new(&api.origin).unwrap();
+        client.restore_session();
+        testkit::eventually("the session", || {
+            client.with_state(|s| matches!(s.session, gelabber_client::Session::Authenticated(_)))
+        });
+        client.fail_op(
+            "logout",
+            gelabber_client::ApiError::Transport("refused".into()),
+        );
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            logout_failed(ui, &client, true);
+        });
+        output.textures_delta.clear();
+        // The client clears it on its runtime.
+        testkit::eventually("the failure to go", || {
+            client.with_state(|s| s.op("logout").is_none())
+        });
+    }
+
     /// The window shows the shell on its own session check, so the page can
     /// load a server before the client's check answers. That answer names
     /// the same account: what was loaded stays (no "Navigation wird geladen").
     #[test]
     fn the_clients_session_check_keeps_what_the_page_loaded() {
-        use std::time::{Duration, Instant};
         use testkit::{FakeApi, HOME, workspace};
         let _config = crate::platform::paths::testing::TempConfig::new("app-session");
         let api = FakeApi::start(true, |method, path, _| workspace(method, path));
         let client = gelabber_client::Client::new(&api.origin).unwrap();
         let home: uuid::Uuid = HOME.parse().unwrap();
-        let wait = |what: &str, done: &dyn Fn() -> bool| {
-            let start = Instant::now();
-            while !done() {
-                assert!(start.elapsed() < Duration::from_secs(10), "{what}");
-                std::thread::sleep(Duration::from_millis(5));
-            }
-        };
         client.open_server(home);
-        wait("the server", &|| {
+        testkit::eventually("the server", || {
             client.with_state(|s| s.detail(home).is_some())
         });
         client.restore_session();
-        wait("the workspace", &|| {
+        testkit::eventually("the workspace", || {
             client.with_state(|s| s.servers_loaded && s.me().is_some())
         });
         assert!(

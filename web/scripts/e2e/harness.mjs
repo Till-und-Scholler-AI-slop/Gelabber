@@ -1,4 +1,4 @@
-/* global process, console, window, document, fetch, URL */
+/* global process, console, window, document, fetch, URL, location */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -38,6 +38,14 @@ export async function pollPause(deadline) {
   const wakeAt = another ? nextProbeAt : deadline;
   while (Date.now() < wakeAt) await pause(Math.max(1, wakeAt - Date.now()));
   return another && Date.now() + probeBudgetMin <= deadline;
+}
+/** Runs `action` and returns the response `match` picks on `page`. A
+ * waiter started before an action that then throws rejects later with
+ * nobody listening, and that ends the whole runner before its teardown
+ * (GEL-453); waiting on both at once keeps its rejection handled. */
+export async function responseTo(page, match, action) {
+  const [response] = await Promise.all([page.waitForResponse(match), action()]);
+  return response;
 }
 export async function until(probe, accept, code, timeout = 10_000) {
   const deadline = Date.now() + timeout;
@@ -82,6 +90,48 @@ export function failureSite(stack = "") {
     sites.find((site) => !site.startsWith("harness.mjs:")) ?? sites[0] ?? null
   );
 }
+// The harness line too: the same scenario line can call several of its steps.
+// Helpers that only pass a call through name no step; their caller does.
+const passThrough = /^\s+at (?:async )?(?:step|responseTo) /;
+export function harnessSite(stack = "") {
+  for (const line of stack.split("\n")) {
+    if (passThrough.test(line)) continue;
+    const site = /scripts\/e2e\/(harness\.mjs:\d+:\d+)/.exec(line)?.[1];
+    if (site) return site;
+  }
+  return null;
+}
+// Only Playwright's method name ("page.goto"), never the rest of its message.
+export function timedOutAction(error) {
+  return error?.name === "TimeoutError"
+    ? (/^([a-z][a-zA-Z]*\.[a-zA-Z]+): Timeout \d+ms exceeded/.exec(
+        error.message,
+      )?.[1] ?? null)
+    : null;
+}
+// Each step's name and time in order, a failed step included.
+export function stepLog() {
+  const steps = [];
+  async function step(name, action) {
+    const start = Date.now();
+    try {
+      return await action();
+    } finally {
+      steps.push({ step: name, ms: Date.now() - start });
+    }
+  }
+  return { steps, step };
+}
+// Where a failure happened, for its report row: the scenario's own line, not
+// the harness helper that threw; for a Playwright timeout also the call that
+// ran out and the harness line.
+export function failureEvidence(error) {
+  const action = timedOutAction(error);
+  return {
+    site: failureSite(error?.stack),
+    ...(action ? { action, harnessSite: harnessSite(error.stack) } : {}),
+  };
+}
 export function safeError(error) {
   // Playwright errors contain URLs, form values and call logs: never persist them.
   return error instanceof CheckFailure ||
@@ -111,6 +161,179 @@ export async function api(actor, path, method = "GET", body, nativeBudget) {
   return nativeBudget === undefined
     ? actor.page.evaluate(request, args)
     : nativeEvaluate(actor, request, args, nativeBudget);
+}
+// The requests a page sends from now on that `pick` keeps: method, status
+// or failure, and when they were sent and answered, in ms from the start,
+// with what `pick` adds (an object; null leaves the request out). `stop`
+// ends the recording. `answered` sees each answer with its entry; `view`
+// turns an entry into what `list` gives.
+export function requestLog(
+  page,
+  pick,
+  now = () => Date.now(),
+  { answered = () => {}, view = (entry) => ({ ...entry }) } = {},
+) {
+  const since = now();
+  const entries = new Map();
+  const listeners = {
+    request: (request) => {
+      const extra = pick(request);
+      if (extra)
+        entries.set(request, {
+          ...extra,
+          method: request.method(),
+          sentAt: now() - since,
+          status: null,
+          failed: false,
+          doneAt: null,
+        });
+    },
+    response: (response) => {
+      const entry = entries.get(response.request());
+      if (!entry) return;
+      entry.status = response.status();
+      entry.doneAt = now() - since;
+      answered(response, entry);
+    },
+    requestfailed: (request) => {
+      const entry = entries.get(request);
+      if (!entry) return;
+      entry.failed = true;
+      entry.doneAt = now() - since;
+    },
+  };
+  for (const [event, listener] of Object.entries(listeners))
+    page.on(event, listener);
+  return {
+    list: () => [...entries.values()].map(view),
+    stop: () => {
+      for (const [event, listener] of Object.entries(listeners))
+        page.off?.(event, listener);
+    },
+  };
+}
+// The invite requests a page sends from now on (GEL-423).
+export function inviteRequests(page, now = () => Date.now()) {
+  return requestLog(
+    page,
+    (request) =>
+      /^\/api\/(servers\/[^/]+\/invites|invites\/[^/]+)$/.test(
+        new URL(request.url()).pathname,
+      )
+        ? {}
+        : null,
+    now,
+  );
+}
+// A server's and its chat's requests, by path with IDs masked: the server
+// and its channels, a channel's messages and uploads, one message
+// (GEL-443). Each answered read of the server also says how many channels
+// it held and whether it held a channel this page created, never which:
+// a read without the created channel that answers after the create is what
+// drops it from the sidebar.
+export function chatRequests(page, now = () => Date.now()) {
+  const created = new Set();
+  const reads = new WeakMap();
+  const body = (response) =>
+    Promise.resolve()
+      .then(() => response.json())
+      .catch(() => null);
+  return requestLog(
+    page,
+    (request) => {
+      const path = new URL(request.url()).pathname;
+      return /^\/api\/(servers\/[^/]+(\/channels)?|channels\/[^/]+\/(messages|attachments)|messages\/[^/]+|attachments\/[^/]+\/upload)$/.test(
+        path,
+      )
+        ? { path: path.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, ":id") }
+        : null;
+    },
+    now,
+    {
+      answered: (response, entry) => {
+        if (entry.status !== 200 && entry.status !== 201) return;
+        if (
+          entry.method === "POST" &&
+          entry.path === "/api/servers/:id/channels"
+        )
+          void body(response).then((channel) => {
+            if (typeof channel?.id === "string") created.add(channel.id);
+          });
+        if (entry.method === "GET" && entry.path === "/api/servers/:id")
+          void body(response).then((server) => {
+            if (Array.isArray(server?.channels))
+              reads.set(
+                entry,
+                new Set(server.channels.map((channel) => channel.id)),
+              );
+          });
+      },
+      view: (entry) => {
+        const channels = reads.get(entry);
+        return channels
+          ? {
+              ...entry,
+              channels: channels.size,
+              holdsCreated: [...created].some((id) => channels.has(id)),
+            }
+          : { ...entry };
+      },
+    },
+  );
+}
+// What the owner's page shows when its invite link does not come: its path
+// (IDs masked), each dialog's name and text, and the link field's state.
+export function invitePageState() {
+  const field = document.querySelector('input[aria-label="Einladungslink"]');
+  return {
+    path: location.pathname.replace(/[0-9a-f-]{36}/g, ":id"),
+    dialogs: [
+      ...document.querySelectorAll(
+        'dialog,[role="dialog"],[role="alertdialog"]',
+      ),
+    ].map((dialog) => ({
+      open: dialog.tagName === "DIALOG" ? dialog.open : null,
+      name:
+        dialog.getAttribute("aria-label") ??
+        dialog.querySelector("h1,h2")?.textContent?.trim().slice(0, 80) ??
+        null,
+      text: dialog.textContent.trim().replace(/\s+/g, " ").slice(0, 300),
+    })),
+    field: !field
+      ? "missing"
+      : !field.value
+        ? "empty"
+        : field.value.includes("/invite/")
+          ? "link"
+          : "other",
+  };
+}
+// What a chat page shows when a chat fault scenario runs out of time
+// (GEL-443): its path (IDs masked), its open dialogs, the channels in the
+// sidebar (a pending one has no link yet) and the message rows, each with
+// its text (shortened) and whether it is sending, failed or offers a retry.
+export function chatPageState() {
+  const text = (element, length) =>
+    (element?.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, length);
+  return {
+    path: location.pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, ":id"),
+    dialogs: [
+      ...document.querySelectorAll(
+        'dialog[open],[role="dialog"],[role="alertdialog"]',
+      ),
+    ].map((dialog) => text(dialog, 80)),
+    channels: [
+      ...document.querySelectorAll(".channel-sidebar .channel-row-link"),
+    ].map((row) => ({ name: text(row, 60), link: row.tagName === "A" })),
+    messages: [...document.querySelectorAll(".lr-message-row")].map((row) => ({
+      text: text(row.querySelector(".lr-message-text"), 80),
+      sending: row.classList.contains("is-sending"),
+      failed: row.classList.contains("is-failed"),
+      retry: [...row.querySelectorAll("button")].some(
+        (button) => button.textContent.trim() === "Erneut senden",
+      ),
+    })),
+  };
 }
 export async function startHarness() {
   const base = safeTarget(
@@ -191,6 +414,50 @@ export async function startHarness() {
     results: [],
     cleanup: [],
   };
+  // How long each fixture step took, in the fixture's row (GEL-423).
+  const { steps: fixtureSteps, step } = stepLog();
+  // The running case's steps, for its row: which step ran out, and how long
+  // each before it took (GEL-443). Outside a case a step only runs.
+  let caseSteps = null;
+  const caseStep = (name, action) =>
+    caseSteps ? caseSteps.step(name, action) : action();
+  const reportPath =
+    process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/report.json";
+  let lastFinished = null;
+  const lateStrays = [];
+  // A promise a scenario left behind can reject after its row is written.
+  // Node would end the run on it, before the report and the runner's
+  // teardown, and every later profile would find the ports taken (GEL-453).
+  // It fails by name instead, and the run goes on.
+  process.on("unhandledRejection", (error) => {
+    const reason = safeError(error);
+    process.exitCode = 1;
+    const row = {
+      id: "stray-rejection",
+      status: "FAIL",
+      reason,
+      classification: "test-error",
+      // Where it came from; `during` and `after` only say when it arrived.
+      site: failureSite(error?.stack),
+      harnessSite: harnessSite(error?.stack),
+      during: report.checkpoint?.case ?? null,
+      after: lastFinished,
+      at: new Date().toISOString(),
+    };
+    console.log(`FAIL stray-rejection (${reason})`);
+    if (!report.finishedAt) {
+      report.results.push(row);
+      return;
+    }
+    // The report is written: such a row goes beside it, as .startup.json
+    // and .teardown.json do.
+    lateStrays.push(row);
+    writeFile(
+      `${reportPath}.stray.json`,
+      `${JSON.stringify({ status: "FAIL", results: lateStrays }, null, 2)}\n`,
+      { mode: 0o600 },
+    ).catch(() => console.log("FAIL stray-rejection-report-write-error"));
+  });
   async function actor(label) {
     // The scenarios find controls by their German names, and the
     // app follows the browser's language (src/i18n/locale.ts), English on CI.
@@ -212,52 +479,89 @@ export async function startHarness() {
       completedActorContextCloses.add(context);
     };
     actors.push(result);
-    await page.goto(`${base}/register`);
-    await page.getByLabel("Name", { exact: true }).fill(`E2E ${label}`);
-    await page.getByLabel("E-Mail-Adresse").fill(email);
-    await page.getByLabel("Passwort", { exact: true }).fill(password);
-    await page
-      .getByRole("button", { name: "Registrieren", exact: true })
-      .click();
-    await page.waitForURL((url) => !url.pathname.includes("register"));
+    await step(`${label}-register-page`, async () => {
+      await page.goto(`${base}/register`);
+      await page.getByLabel("Name", { exact: true }).fill(`E2E ${label}`);
+    });
+    await step(`${label}-register-submit`, async () => {
+      await page.getByLabel("E-Mail-Adresse").fill(email);
+      await page.getByLabel("Passwort", { exact: true }).fill(password);
+      await page
+        .getByRole("button", { name: "Registrieren", exact: true })
+        .click();
+      await page.waitForURL((url) => !url.pathname.includes("register"));
+    });
     const session = await api(result, "/auth/session");
     check(session.body?.user?.id, "registration-session-missing");
     result.id = session.body.user.id;
     return result;
   }
+  // Only this fixture's steps: scenarios register more actors, and build
+  // more fixtures, through the same log.
   async function fixture() {
+    const from = fixtureSteps.length;
+    try {
+      return { ...(await buildFixture()), steps: fixtureSteps.slice(from) };
+    } catch (error) {
+      if (error && typeof error === "object")
+        error.fixtureSteps = fixtureSteps.slice(from);
+      throw error;
+    }
+  }
+  async function buildFixture() {
     const owner = await actor("Publisher");
-    await owner.page
-      .getByRole("button", { name: "Server erstellen", exact: true })
-      .first()
-      .click();
-    let dialog = owner.page.getByRole("dialog", { name: "Server erstellen" });
-    await dialog.getByLabel("Name", { exact: true }).fill(`E2E ${suffix}`);
-    await dialog
-      .getByRole("button", { name: "Erstellen", exact: true })
-      .click();
-    // Creating a community opens its overview with an invite link already
-    // made. Keep the link, then select the actual text channel through the
-    // UI before continuing the message scenarios.
-    await owner.page.waitForURL(/\/s\/[^/]+(?:\/c\/[^/]+)?$/);
+    let dialog;
+    // The owner's invite requests from here on, for a failed invite step
+    // (GEL-423).
+    const invites = inviteRequests(owner.page);
+    await step("server-create", async () => {
+      await owner.page
+        .getByRole("button", { name: "Server erstellen", exact: true })
+        .first()
+        .click();
+      dialog = owner.page.getByRole("dialog", { name: "Server erstellen" });
+      await dialog.getByLabel("Name", { exact: true }).fill(`E2E ${suffix}`);
+      await dialog
+        .getByRole("button", { name: "Erstellen", exact: true })
+        .click();
+      // Creating a community opens its overview with an invite link already
+      // made. Keep the link, then select the actual text channel through the
+      // UI before continuing the message scenarios.
+      await owner.page.waitForURL(/\/s\/[^/]+(?:\/c\/[^/]+)?$/);
+    });
     const serverId = new URL(owner.page.url()).pathname.split("/")[2];
-    dialog = owner.page.getByRole("dialog", { name: /einladen$/ });
-    await owner.page.waitForFunction(() =>
-      document
-        .querySelector('input[aria-label="Einladungslink"]')
-        ?.value.includes("/invite/"),
-    );
-    const invite = await dialog
-      .getByRole("textbox", { name: "Einladungslink" })
-      .inputValue();
-    // Closing the dialog revokes a link nobody copied or shared
-    // (inviteSession.ts), so take it the way a user would first.
-    await dialog
-      .getByRole("button", { name: "Link kopieren", exact: true })
-      .click();
-    await dialog
-      .getByRole("button", { name: "Schließen", exact: true })
-      .click();
+    const invite = await step("invite-link", async () => {
+      dialog = owner.page.getByRole("dialog", { name: /einladen$/ });
+      try {
+        await owner.page.waitForFunction(() =>
+          document
+            .querySelector('input[aria-label="Einladungslink"]')
+            ?.value.includes("/invite/"),
+        );
+      } catch (error) {
+        if (error && typeof error === "object")
+          error.evidence = {
+            inviteRequests: invites.list(),
+            page: await deadlineProbe(
+              () => owner.page.evaluate(invitePageState),
+              Date.now() + 2_000,
+            ).catch(() => null),
+          };
+        throw error;
+      }
+      const link = await dialog
+        .getByRole("textbox", { name: "Einladungslink" })
+        .inputValue();
+      // Closing the dialog revokes a link nobody copied or shared
+      // (inviteSession.ts), so take it the way a user would first.
+      await dialog
+        .getByRole("button", { name: "Link kopieren", exact: true })
+        .click();
+      await dialog
+        .getByRole("button", { name: "Schließen", exact: true })
+        .click();
+      return link;
+    });
     servers.push({ owner, id: serverId });
     const detail = await api(owner, `/servers/${serverId}`);
     check(detail.status === 200, "fixture-server-detail-missing");
@@ -266,25 +570,37 @@ export async function startHarness() {
     );
     check(textChannel?.id, "fixture-text-channel-missing");
     const textPath = `/s/${serverId}/c/${textChannel.id}`;
-    await owner.page.locator(`a.channel-row-link[href="${textPath}"]`).click();
-    await owner.page.waitForURL((url) => url.pathname === textPath);
-    async function channel(name, kind = "Sprache") {
-      await owner.page.locator("summary.server-sidebar-menu-button").click();
+    await step("text-channel-open", async () => {
       await owner.page
-        .getByRole("button", { name: "Kanal erstellen", exact: true })
+        .locator(`a.channel-row-link[href="${textPath}"]`)
         .click();
+      await owner.page.waitForURL((url) => url.pathname === textPath);
+    });
+    // In a case, its row lists these steps.
+    async function channel(name, kind = "Sprache") {
+      await caseStep("channel-menu", async () => {
+        await owner.page.locator("summary.server-sidebar-menu-button").click();
+        await owner.page
+          .getByRole("button", { name: "Kanal erstellen", exact: true })
+          .click();
+      });
       dialog = owner.page.getByRole("dialog", { name: "Kanal erstellen" });
-      await dialog.getByText(kind, { exact: true }).click();
-      await dialog.getByLabel("Name", { exact: true }).fill(name);
-      const createdResponse = owner.page.waitForResponse(
-        (r) =>
-          new URL(r.url()).pathname === `/api/servers/${serverId}/channels` &&
-          r.request().method() === "POST",
+      await caseStep("channel-form", async () => {
+        await dialog.getByText(kind, { exact: true }).click();
+        await dialog.getByLabel("Name", { exact: true }).fill(name);
+      });
+      const response = await caseStep("channel-create", () =>
+        responseTo(
+          owner.page,
+          (r) =>
+            new URL(r.url()).pathname === `/api/servers/${serverId}/channels` &&
+            r.request().method() === "POST",
+          () =>
+            dialog
+              .getByRole("button", { name: "Erstellen", exact: true })
+              .click(),
+        ),
       );
-      await dialog
-        .getByRole("button", { name: "Erstellen", exact: true })
-        .click();
-      const response = await createdResponse;
       check(
         [200, 201].includes(response.status()),
         "channel-fixture-create-rejected",
@@ -292,11 +608,16 @@ export async function startHarness() {
       );
       const created = await response.json();
       const path = `/s/${serverId}/c/${created.id}`;
-      await owner.page.locator(`.channel-sidebar a[href="${path}"]`).click();
+      await caseStep("channel-open", () =>
+        owner.page.locator(`.channel-sidebar a[href="${path}"]`).click(),
+      );
       return path;
     }
-    const voicePath = await channel("E2E Voice A");
-    const otherPath = await channel("E2E Voice B");
+    const voicePath = await step("voice-channel-a", () =>
+      channel("E2E Voice A"),
+    );
+    // Other scenarios open it by its name.
+    await step("voice-channel-b", () => channel("E2E Voice B"));
     async function join(who) {
       await who.page.goto(invite);
       await who.page
@@ -307,9 +628,11 @@ export async function startHarness() {
     }
     const member = await actor("Member");
     const watcher = await actor("Watch");
-    await join(member);
-    await join(watcher);
-    await owner.page.goto(`${base}${voicePath}`);
+    await step("Member-join", () => join(member));
+    await step("Watch-join", () => join(watcher));
+    await step("Publisher-voice-open", () =>
+      owner.page.goto(`${base}${voicePath}`),
+    );
     return {
       owner,
       member,
@@ -319,7 +642,6 @@ export async function startHarness() {
       serverId,
       textPath,
       voicePath,
-      otherPath,
       base,
     };
   }
@@ -358,6 +680,8 @@ export async function startHarness() {
     });
     const start = Date.now();
     let row;
+    const steps = stepLog();
+    caseSteps = steps;
     try {
       if (isolation) await isolation();
       row = {
@@ -381,14 +705,24 @@ export async function startHarness() {
               : error instanceof CheckFailure && /fixture/.test(error.message)
                 ? "test-error"
                 : "unconfirmed-failure",
-        // The scenario's own line, not the harness helper that threw.
-        site: failureSite(error.stack),
+        ...failureEvidence(error),
         ...(error instanceof CheckFailure ||
         error instanceof NativeInterfaceFailure
           ? { metrics: error.metrics }
           : {}),
       };
+      // A failed fixture's step times sit where its PASS row has them.
+      if (Array.isArray(error?.fixtureSteps))
+        row.metrics = { ...row.metrics, steps: error.fixtureSteps };
+      // What a fixture or a scenario found out about its failure.
+      // Never over a metric of the scenario's own.
+      if (error?.evidence) row.metrics = { ...error.evidence, ...row.metrics };
+    } finally {
+      caseSteps = null;
     }
+    // A case's own steps, where a fixture's row has its own.
+    if (steps.steps.length > 0 && !Array.isArray(row.metrics?.steps))
+      row.metrics = { ...row.metrics, steps: steps.steps };
     if (isolation && !nativeInterfaceBlocked) {
       try {
         await isolation();
@@ -401,6 +735,7 @@ export async function startHarness() {
     row.durationMs = Date.now() - start;
     row.predecessors = predecessors;
     report.results.push(row);
+    lastFinished = id;
     console.log(`${row.status} ${id}${row.reason ? ` (${row.reason})` : ""}`);
     return row;
   }
@@ -500,16 +835,16 @@ export async function startHarness() {
         await page.goto(`${base}/login`);
         await page.getByLabel("E-Mail-Adresse").fill(owner.email);
         await page.getByLabel("Passwort", { exact: true }).fill(password);
-        const login = page.waitForResponse(
+        stage = "submit-login";
+        const login = await responseTo(
+          page,
           (r) =>
             new URL(r.url()).pathname === "/api/auth/login" &&
             r.request().method() === "POST",
+          () =>
+            page.getByRole("button", { name: "Anmelden", exact: true }).click(),
         );
-        stage = "submit-login";
-        await page
-          .getByRole("button", { name: "Anmelden", exact: true })
-          .click();
-        statuses.login = (await login).status();
+        statuses.login = login.status();
         stage = "wait-login-redirect";
         await page.waitForURL((url) => !url.pathname.includes("login"));
         stage = "delete-owned-server";
@@ -568,14 +903,27 @@ export async function startHarness() {
         reason: "cleanup-browser-close-failed",
       });
     });
+    // No await between finishedAt, the gate and serialising the report: a
+    // stray rejection lands either in both or in .stray.json.
+    await mkdir(dirname(reportPath), { recursive: true });
     report.finishedAt = new Date().toISOString();
     for (const id of gate(report.results, selected, report.cleanup).absent)
       blocked(id, "selected-case-unknown-or-not-reached");
-    report.gate = gate(report.results, selected, report.cleanup);
-    const path =
-      process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/report.json";
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, {
+    const expected = JSON.parse(
+      process.env.GELABBER_E2E_EXPECTED_FAILURES || "{}",
+    );
+    report.gate = gate(report.results, selected, report.cleanup, expected);
+    for (const { id, issue, reason } of report.gate.expectedFailures)
+      console.log(`EXPECTED FAIL ${id} (${issue}): ${reason}`);
+    for (const { id, issue, reason, site } of report.gate.otherFailures)
+      console.log(
+        `FAIL of an expected failure for another reason: ${id} ${reason} at ${site} (listed under ${issue})`,
+      );
+    for (const { id, issue } of report.gate.nowPassing)
+      console.log(
+        `PASS of an expected failure: remove ${id} from its profile's list (${issue})`,
+      );
+    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, {
       mode: 0o600,
     });
     if (!report.gate.passed) process.exitCode = 1;
@@ -596,6 +944,7 @@ export async function startHarness() {
     },
     setIsolation,
     run,
+    step: caseStep,
     blocked,
     finish,
     report,

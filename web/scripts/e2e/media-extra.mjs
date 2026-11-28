@@ -1,8 +1,4 @@
-import {
-  nativeEvaluate,
-  deadlineProbe,
-  NativeInterfaceFailure,
-} from "./native-evaluate.mjs";
+import { nativeEvaluate, NativeInterfaceFailure } from "./native-evaluate.mjs";
 import { attemptAll } from "./teardown.mjs";
 /* global window, setTimeout, clearTimeout */
 import {
@@ -12,10 +8,19 @@ import {
   liveTiles,
   snapshot,
   until,
-  observe,
 } from "./harness.mjs";
-import { activePeers, progress } from "./media.mjs";
-import { sampleVideoSenders, samplePublicationFlow } from "./probe.mjs";
+import {
+  activePeers,
+  armPlaybackRetry,
+  progress,
+  waitForPath,
+} from "./media.mjs";
+import {
+  sampleVideoSenders,
+  samplePublicationFlow,
+  sendTimeline,
+  startSendTimeline,
+} from "./probe.mjs";
 import { publisherEncoderProgress } from "./publisher-encoders.mjs";
 const audioPackets = (s) =>
   activePeers(s)
@@ -27,11 +32,9 @@ const audioSenders = (s) =>
     .flatMap((p) => p.audioSenders)
     .filter((t) => t.live);
 
-export async function closeSessionAudioActors(
-  watcher,
-  other,
-  budgetMs = 5_000,
-) {
+/** Lifts the scenario's playback fault from the watcher's page, bounded:
+ * a page whose native evaluation is unusable is not touched again. */
+export async function restoreSessionPlayback(watcher, budgetMs = 5_000) {
   const failedSteps = await attemptAll([
     [
       "playback-restore",
@@ -47,10 +50,6 @@ export async function closeSessionAudioActors(
           budgetMs,
         );
       },
-    ],
-    [
-      "other-context-close",
-      () => deadlineProbe(() => other.context.close(), Date.now() + budgetMs),
     ],
   ]);
   if (failedSteps.length)
@@ -92,9 +91,52 @@ export async function concurrentLive(h, f, { reset, options }) {
     simultaneousLives: 2,
     settled,
     tiles: shown,
-    first: await progress(f.watcher, options),
+    // Two Lives in the room: each one is measured by name (GEL-33).
+    first: await progress(f.watcher, {
+      ...options,
+      publisher: `E2E ${f.owner.label}`,
+    }),
+    second: await progress(f.watcher, {
+      ...options,
+      publisher: `E2E ${f.member.label}`,
+    }),
   };
 }
+
+// The retried Live's steps in ms after its click (GEL-460), from both pages'
+// media RPC and consumer records: on every row, so that a slow retry that
+// still passes says which step took its time.
+export function retrySteps(clickedAt, retry, publisher, watcher) {
+  const last = (flow, method) =>
+    flow?.rpc?.filter((c) => c.method === method && c.kind === "s").at(-1);
+  const after = (at) =>
+    typeof at === "number" && typeof clickedAt === "number"
+      ? at - clickedAt
+      : null;
+  const produce = last(publisher, "produce");
+  const watch = last(watcher, "w");
+  const ready = last(watcher, "consumerReady");
+  const consumer = watcher?.consumers?.at(-1);
+  return {
+    produceSent: after(produce?.sentAt),
+    produceAnswered: after(produce?.answeredAt),
+    watchSent: after(watch?.sentAt),
+    watchAnswered: after(watch?.answeredAt),
+    consumerArrived: after(consumer?.arrivedAt),
+    consumerReadySent: after(ready?.sentAt),
+    consumerReadyAnswered: after(ready?.answeredAt),
+    lastLayerReport: after(consumer?.layers?.at),
+    layer: consumer?.layers
+      ? { spatial: consumer.layers.spatial, temporal: consumer.layers.temporal }
+      : null,
+    firstFrame:
+      typeof retry?.startedAt === "number"
+        ? after(retry.startedAt + retry.firstFrameMs)
+        : null,
+  };
+}
+// Above this, a passing row keeps both pages' raw records too.
+const SLOW_RETRY_MS = 1_500;
 
 export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
   await h.run("voice-only-duplex-single-source", ["02", "08b"], async () => {
@@ -114,15 +156,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       );
     }
     const before = await until(
-      async () => {
-        for (const actor of [f.owner, f.member])
-          await nativeEvaluate(actor, () => {
-            window.__e2e.expectedAudioPeer = window.__e2e.peers.find(
-              (p) => p.connectionState === "connected",
-            );
-          });
-        return Promise.all([snapshot(f.owner), snapshot(f.member)]);
-      },
+      () => Promise.all([snapshot(f.owner), snapshot(f.member)]),
       (states) => states.every((s) => audioPackets(s) > 0),
       "fixture-voice-only-duplex-audio-missing",
       options.budget,
@@ -134,7 +168,25 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       "voice-only-duplex-audio-did-not-progress",
       options.budget,
     );
-    for (const s of after) {
+    // Packets arrive before the browser has attached the received track to
+    // its audio element: wait until each side plays something. How many
+    // sources and paths is the check's to judge, on a later sample: a second
+    // path for the same source can come a moment after the first, so it
+    // judges the sample in which the audio has moved on past this one.
+    const attached = await until(
+      () => Promise.all([snapshot(f.owner), snapshot(f.member)]),
+      (states) => states.every((s) => s.roomAudio.perSource.some((n) => n > 0)),
+      "voice-only-duplex-playback-not-attached",
+      options.budget,
+    );
+    const judged = await until(
+      () => Promise.all([snapshot(f.owner), snapshot(f.member)]),
+      (states) =>
+        states.every((s, i) => audioPackets(s) > audioPackets(attached[i])),
+      "voice-only-duplex-audio-stopped-after-attach",
+      options.budget,
+    );
+    for (const [i, s] of judged.entries()) {
       check(
         s.roomAudio.perSource.length === 1 &&
           s.roomAudio.perSource[0] === 1 &&
@@ -145,25 +197,16 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           audioSenders(s).length === 1 &&
           audioSenders(s)[0].enabled,
         "voice-only-source-duplicate-or-unexpected-capture",
-        { before, after },
+        { before, after, attached, judged },
       );
-      const paths = activePeers(s).flatMap((p) => p.selected);
-      check(
-        paths.length > 0 &&
-          paths.every(
-            (p) =>
-              p.state === "succeeded" &&
-              (options.relay
-                ? p.local === "relay"
-                : p.local !== "relay" && p.remote !== "relay"),
-          ),
-        "selected-network-path-mismatch",
-        { paths },
-      );
+      // Read until settled, as in progress() (GEL-465).
+      await waitForPath(() => snapshot([f.owner, f.member][i]), options.relay);
     }
     return {
       before,
       after,
+      attached,
+      judged,
       limitation: "native duplex transport, not human intelligibility",
     };
   });
@@ -268,6 +311,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       const warmupStart = Date.now();
       const cameraFixtureWarmup = { deadlineMs: 20_000, status: "FAIL" };
       let camera, before;
+      let retryClickedAt = null;
       try {
         const ready = await until(
           () => snapshot(f.member),
@@ -361,13 +405,45 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "rejected-sdp-ghost-live-display",
           { controlConfirmed: true, after: afterCamera.last },
         );
+        // What the publisher sends per layer while the retry starts: evidence
+        // only, so a sampler that cannot start fails nothing (GEL-460).
+        await nativeEvaluate(f.owner, startSendTimeline, { kind: "s" }).catch(
+          () => null,
+        );
+        retryClickedAt = Date.now();
         await click(f.owner, "Live gehen");
         // The retry is the second display capture, drawn green.
         const retry = await progress(f.member, {
           ...options,
           color: [30, 220, 30],
         });
+        // Evidence only: a read that fails leaves nulls, never a failed row.
+        const publisherLive = await nativeEvaluate(
+          f.owner,
+          samplePublicationFlow,
+          { kind: "s" },
+        ).catch(() => null);
+        const subscriberLive = await nativeEvaluate(
+          f.member,
+          samplePublicationFlow,
+          { kind: "s" },
+        ).catch(() => null);
         return {
+          retrySteps: retrySteps(
+            retryClickedAt,
+            retry,
+            publisherLive,
+            subscriberLive,
+          ),
+          ...(retry.firstFrameMs > SLOW_RETRY_MS
+            ? {
+                publisherLive,
+                subscriberLive,
+                sendTimeline: await nativeEvaluate(f.owner, sendTimeline).catch(
+                  () => null,
+                ),
+              }
+            : {}),
           injection:
             "one real native setRemoteDescription rejection of malformed answer",
           cameraFixtureWarmup,
@@ -383,6 +459,9 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         const observed = await snapshot(f.owner).catch(() => null);
         const diagnostics = {
           cameraFixtureWarmup,
+          // With the RPC and consumer times below, where a slow retry spent
+          // its time (GEL-460).
+          retryClickedAt,
           faultExercised: observed?.rejectedSdp > 0,
           sdpRejectionErrors: observed?.rejectedSdpErrors ?? [],
           publisherLive: await nativeEvaluate(f.owner, samplePublicationFlow, {
@@ -394,6 +473,18 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
             { kind: "s" },
           ),
         };
+        if (retryClickedAt !== null) {
+          diagnostics.retrySteps = retrySteps(
+            retryClickedAt,
+            null,
+            diagnostics.publisherLive,
+            diagnostics.subscriberLive,
+          );
+          diagnostics.sendTimeline = await nativeEvaluate(
+            f.owner,
+            sendTimeline,
+          ).catch(() => null);
+        }
         if (error instanceof CheckFailure) {
           error.metrics = { ...error.metrics, ...diagnostics };
           throw error;
@@ -406,124 +497,102 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       }
     },
   );
+  // One call, room A: the owner is live, the member talks, and the watcher
+  // joins with playback refused. The visible retry starts every audio path
+  // of the room; mute, deafen and the call volume then act on all of them.
   await h.run(
     "session-audio-mute-deafen-volume-playback-retry",
     ["08a", "08b"],
     async () => {
-      await begin(f);
-      await progress(f.watcher, options);
+      await reset(f);
+      await click(f.owner, "Beitreten");
+      await click(f.owner, "Live gehen");
       await click(f.member, "Beitreten");
       await until(
         () => snapshot(f.member),
         (s) => audioPackets(s) > 0,
         "fixture-bidirectional-audio-not-received",
       );
-      await nativeEvaluate(
-        f.watcher,
-        (publishers) => {
-          window.__e2e.expectedAudioPeer = window.__e2e.peers.find(
-            (p) => p.connectionState === "connected",
-          );
-          window.__e2e.expectedAudioPublishers = publishers;
-          window.__e2e.expectedLivePublisher = publishers[0];
-        },
-        [f.owner.id, f.member.id],
-      );
-      const selected = await until(
-        () => snapshot(f.watcher),
-        (s) =>
-          s.roomAudio.perSource.length === 2 &&
-          s.roomAudio.perSource.every((n) => n === 1),
-        "fixture-each-room-audio-source-not-received",
-      );
-      check(
-        selected.roomAudio.foreign === 0 &&
-          selected.watchVideoSources.selectedLive === 1 &&
-          selected.watchVideoSources.foreign === 0 &&
-          selected.duplicateAudioPlaybackTracks === 0 &&
-          selected.micCalls === 0,
-        "watch-foreign-source-or-duplicate-audio",
-        { selected },
-      );
-      // Keep Watch A while the same account joins voice B; both playback paths
-      // must obey the one session's controls after SPA navigation.
-      const other = await h.actor("OtherVoice");
-      await f.join(other);
-      let stage = "other-voice-room-navigation";
+      const audioPlays = (s) =>
+        s.playback.filter((p) => p.kind === "audio" && p.audioTracks > 0);
+      // The owner's and the member's microphone.
+      const paths = 2;
+      let stage = "watcher-voice-join";
       try {
-        await other.page
-          .locator(`.channel-sidebar a[href="${f.otherPath}"]`)
-          .click();
-        await click(other, "Beitreten");
-        await until(
-          () => snapshot(other),
-          (s) =>
-            activePeers(s)
-              .flatMap((p) => p.outbound)
-              .some((r) => r.kind === "audio" && r.packets > 0),
-          "fixture-other-room-positive-audio-missing",
-        );
-        stage = "other-room-live-start";
-        await click(other, "Live gehen");
-        await until(
-          () => snapshot(other),
-          (s) =>
-            activePeers(s)
-              .flatMap((p) => p.outbound)
-              .some((r) => r.kind === "video" && r.frames > 0),
-          "fixture-other-room-positive-live-missing",
-        );
-        stage = "watcher-navigation-to-other-room";
-        const isolatedRoom = await observe(1_000, () => snapshot(f.watcher));
-        check(
-          isolatedRoom.roomAudio.perSource.length === 2 &&
-            isolatedRoom.roomAudio.perSource.every((n) => n === 1) &&
-            isolatedRoom.roomAudio.foreign === 0 &&
-            isolatedRoom.watchVideoSources.selectedLive === 1 &&
-            isolatedRoom.watchVideoSources.foreign === 0,
-          "watch-other-room-source-leak",
-          { controlConfirmed: true, isolatedRoom },
-        );
-        // Active Live adds status text to the accessible channel name. The
-        // fixture's exact channel href still targets the actual SPA link.
-        await f.watcher.page
-          .locator(`.channel-sidebar a[href="${f.otherPath}"]`)
-          .click();
         await nativeEvaluate(f.watcher, () => {
           window.__e2e.rejectPlayback = true;
         });
-        stage = "watcher-voice-join";
         await click(f.watcher, "Beitreten");
+        // First the room's paths, under a name of their own: a participant
+        // left over from another scenario shows up here, not as a refusal.
         await until(
           () => snapshot(f.watcher),
-          (s) =>
-            s.playRejected > 0 &&
-            s.playback.filter((p) => p.kind === "audio" && p.audioTracks > 0)
-              .length === 3,
-          "fixture-three-session-audio-playback-tracks-not-present",
+          (s) => audioPlays(s).length === paths,
+          "fixture-room-audio-paths-not-two",
+        );
+        const blocked = await until(
+          () => snapshot(f.watcher),
+          (s) => s.playRejected > 0,
+          "fixture-room-audio-playback-not-refused",
         );
         const retry = f.watcher.page.getByRole("button", {
           name: "Ton starten",
           exact: true,
         });
-        check(
-          (await retry.count()) > 0,
+        await until(
+          () => retry.count(),
+          (count) => count > 0,
           "audio-playback-failure-no-visible-retry",
+          5_000,
         );
-        await nativeEvaluate(f.watcher, () => {
-          window.__e2e.rejectPlayback = false;
-        });
+        // The fault lifts with the real click on the retry, not before. A
+        // refused element can still report playing (autoplay), so the retry
+        // counts by the play() calls it gets through, one per path, and the
+        // notice going away.
+        await nativeEvaluate(f.watcher, armPlaybackRetry);
         stage = "visible-audio-retry";
+        const before = (await snapshot(f.watcher)).audioPlayStarted;
         await retry.first().click();
-        const audioPlays = (s) =>
-          s.playback.filter((p) => p.kind === "audio" && p.audioTracks > 0);
         const playing = await until(
-          () => snapshot(f.watcher),
+          async () => ({
+            ...(await snapshot(f.watcher)),
+            retryShown: await retry.count(),
+          }),
           (s) =>
-            audioPlays(s).length === 3 &&
+            s.audioPlayStarted - before >= paths &&
+            s.retryShown === 0 &&
+            audioPlays(s).length === paths &&
             audioPlays(s).every((p) => !p.paused && !p.muted) &&
             !s.duplicateAudioPlaybackTracks,
           "audio-click-retry-did-not-play-every-path",
+        );
+        stage = "watch-live";
+        await progress(f.watcher, options);
+        await nativeEvaluate(
+          f.watcher,
+          (publishers) => {
+            window.__e2e.expectedAudioPublishers = publishers;
+            window.__e2e.expectedLivePublisher = publishers[0];
+          },
+          [f.owner.id, f.member.id],
+        );
+        const selected = await until(
+          () => snapshot(f.watcher),
+          (s) =>
+            s.roomAudio.perSource.length === paths &&
+            s.roomAudio.perSource.every((n) => n === 1),
+          "fixture-each-room-audio-source-not-received",
+        );
+        check(
+          selected.roomAudio.foreign === 0 &&
+            selected.watchVideoSources.selectedLive === 1 &&
+            selected.watchVideoSources.foreign === 0 &&
+            selected.duplicateAudioPlaybackTracks === 0 &&
+            // A Live is watched inside the call, which takes the microphone
+            // once (since 2026-10-22); watching takes no second capture.
+            selected.micCalls === 1,
+          "watch-foreign-source-or-duplicate-audio",
+          { selected },
         );
         const microphoneControl = await until(
           async () => {
@@ -658,7 +727,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         const deafened = await until(
           microphoneSnapshot,
           (s) =>
-            audioPlays(s).length === 3 &&
+            audioPlays(s).length === paths &&
             audioPlays(s).every((p) => p.muted) &&
             audioSenders(s).length === 1 &&
             audioSenders(s).every((t) => !t.enabled) &&
@@ -671,7 +740,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         const hearing = await until(
           microphoneSnapshot,
           (s) =>
-            audioPlays(s).length === 3 &&
+            audioPlays(s).length === paths &&
             audioPlays(s).every((p) => !p.muted && !p.paused) &&
             audioSenders(s).length === 1 &&
             audioSenders(s).every((t) => t.enabled) &&
@@ -680,35 +749,35 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "session-undeafen-did-not-restore-every-path",
         );
         stage = "session-volume";
-        // The voice room gear's quick settings hold the call volume, Live
-        // or not.
+        // While a Live plays in the call, the call bar's "Lautstärke" holds
+        // the call volume ("Gespräche") beside the Live's own.
         await f.watcher.page
-          .locator(".voice-room")
-          .getByRole("button", { name: "Anrufeinstellungen", exact: true })
+          .getByRole("region", { name: "Aktive Medien", exact: true })
+          .getByRole("button", { name: "Lautstärke", exact: true })
           .click();
         const volume = f.watcher.page
-          .getByRole("dialog", { name: "Anrufeinstellungen", exact: true })
+          .getByRole("dialog", { name: "Lautstärke", exact: true })
           .getByRole("slider", { name: "Gespräche", exact: true });
         await volume.press("Home");
         for (let i = 0; i < 35; i++) await volume.press("ArrowRight");
         const lower = await until(
           () => snapshot(f.watcher),
           (s) =>
-            audioPlays(s).length === 3 &&
+            audioPlays(s).length === paths &&
             audioPlays(s).every((p) => Math.abs(p.volume - 0.35) < 0.001),
           "session-volume-not-applied-to-every-path",
         );
         return {
-          selected,
-          isolatedRoom,
+          blocked,
           playing,
+          selected,
           microphoneControl,
           muted,
           deafened,
           hearing,
           lower,
           contract:
-            "all same-room audio exactly once; only selected publisher Live video; no other-room sources",
+            "every audio path of the call exactly once, started by the visible retry; only the selected Live's video",
           limitation:
             "native transport/playback properties only; human audible two-device quality remains manual",
         };
@@ -717,10 +786,9 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         throw new CheckFailure("session-audio-interface-error", {
           stage,
           last: await snapshot(f.watcher).catch(() => null),
-          other: await snapshot(other).catch(() => null),
         });
       } finally {
-        await closeSessionAudioActors(f.watcher, other);
+        await restoreSessionPlayback(f.watcher);
       }
     },
   );

@@ -777,6 +777,8 @@ impl Failure {
 async fn connect(http: Http) -> Result<Socket, Failure> {
     let mut request = http
         // `caps=dnd`: this client knows the presence status `d` (#590).
+        // Servers before v0.14.1 tell a socket without it that Do not
+        // disturb is online; remove in v0.16.
         .ws_url("/ws?caps=dnd")
         .into_client_request()
         .map_err(|e| Failure::Refused(e.to_string()))?;

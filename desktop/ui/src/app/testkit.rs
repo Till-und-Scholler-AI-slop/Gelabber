@@ -1,14 +1,32 @@
 //! For kittest tests of whole screens: a stand-in Gelabber API on a local
 //! port (enough of it for the app to start signed in or out), and a
 //! harness around the [`Launcher`] that steps until a condition holds.
+//!
+//! Requests go to the stand-in API on other threads, in real time, and its
+//! answers change the layout. So a click waits until the app is idle and
+//! checks where it lands ([`click`], [`click_node`]). With
+//! `GELABBER_TEST_API_DELAY_MS` set, every answer comes that much later: a
+//! test that clicks too early then fails every time instead of once in a
+//! while. Run the whole-app tests so:
+//!
+//! `GELABBER_TEST_API_DELAY_MS=400 cargo test --manifest-path desktop/Cargo.toml -p gelabber-ui --lib`
+//!
+//! Idle ([`wait_until_idle`]) knows the stand-in's requests, the client's
+//! requests and its timers for later work (`Client::scheduled`: retries,
+//! the unread debounce), and the images loading. It does not know the
+//! client's 400 ms ticker (typing, idle) or a page's own delay before it
+//! asks (`request_repaint_after`: the chat search, the GIF picker, the
+//! directory's search). A test of those waits for what it expects to see.
 
+use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{By, NodeT, Queryable};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 
@@ -64,6 +82,73 @@ pub struct FakeApi {
     pub origin: String,
     /// `METHOD /path` of every request, in order.
     pub seen: Arc<Mutex<Vec<String>>>,
+    /// Requests read and not yet answered.
+    answering: Arc<AtomicUsize>,
+}
+
+/// How long every answer of the stand-in API waits: `GELABBER_TEST_API_DELAY_MS`.
+fn answer_delay() -> Option<Duration> {
+    let ms: u64 = std::env::var("GELABBER_TEST_API_DELAY_MS")
+        .ok()?
+        .parse()
+        .ok()?;
+    (ms > 0).then(|| Duration::from_millis(ms))
+}
+
+/// The stand-in API of the app this test thread launched last
+/// ([`launcher`], [`FakeApi::watch`]): its requests in flight and its log.
+struct Watched {
+    answering: Arc<AtomicUsize>,
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+thread_local! {
+    static WATCHED: RefCell<Option<Watched>> = const { RefCell::new(None) };
+}
+
+fn answering() -> usize {
+    WATCHED.with(|w| {
+        w.borrow()
+            .as_ref()
+            .map_or(0, |w| w.answering.load(Ordering::SeqCst))
+    })
+}
+
+/// The last requests the stand-in saw, for a failure's message.
+fn last_seen() -> String {
+    WATCHED.with(|w| {
+        w.borrow().as_ref().map_or_else(String::new, |w| {
+            let seen = w.seen.lock();
+            let from = seen.len().saturating_sub(12);
+            format!("; the stand-in saw last: {:?}", &seen[from..])
+        })
+    })
+}
+
+/// Work on its way that the next frames depend on: requests, the client's
+/// timers and images.
+fn pending(harness: &mut Harness<'_, Launcher>) -> bool {
+    let scheduled = harness
+        .state_mut()
+        .app()
+        .is_some_and(|app| app.client().scheduled() > 0);
+    answering() > 0 || scheduled || harness.state().busy()
+}
+
+/// Counts a request as in flight until it is answered or the connection ends.
+struct Answering<'a>(&'a AtomicUsize);
+
+impl<'a> Answering<'a> {
+    fn new(count: &'a AtomicUsize) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count)
+    }
+}
+
+impl Drop for Answering<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl FakeApi {
@@ -76,14 +161,36 @@ impl FakeApi {
         let seen: Arc<Mutex<Vec<String>>> = Arc::default();
         let state = Arc::new(Mutex::new(signed_in));
         let route: Arc<Route> = Arc::new(route);
-        let (log, flag) = (seen.clone(), state.clone());
+        let answering: Arc<AtomicUsize> = Arc::default();
+        let (log, flag, count) = (seen.clone(), state.clone(), answering.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let (log, flag, route) = (log.clone(), flag.clone(), route.clone());
-                std::thread::spawn(move || serve(stream, &log, &flag, &*route));
+                let (log, flag, route, count) =
+                    (log.clone(), flag.clone(), route.clone(), count.clone());
+                std::thread::spawn(move || serve(stream, &log, &flag, &*route, &count));
             }
         });
-        Self { origin, seen }
+        Self {
+            origin,
+            seen,
+            answering,
+        }
+    }
+
+    /// Makes [`wait_until_idle`] on this thread wait for this API's answers;
+    /// [`launcher`] does it, a harness built by hand calls it.
+    pub fn watch(&self) {
+        WATCHED.with(|w| {
+            *w.borrow_mut() = Some(Watched {
+                answering: self.answering.clone(),
+                seen: self.seen.clone(),
+            })
+        });
+    }
+
+    /// Requests read and not yet answered.
+    pub fn answering(&self) -> usize {
+        self.answering.load(Ordering::SeqCst)
     }
 
     pub fn saw(&self, request: &str) -> bool {
@@ -91,7 +198,13 @@ impl FakeApi {
     }
 }
 
-fn serve(stream: TcpStream, log: &Mutex<Vec<String>>, signed_in: &Mutex<bool>, route: &Route) {
+fn serve(
+    stream: TcpStream,
+    log: &Mutex<Vec<String>>,
+    signed_in: &Mutex<bool>,
+    route: &Route,
+    answering: &AtomicUsize,
+) {
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
     let mut out = stream;
     loop {
@@ -99,6 +212,7 @@ fn serve(stream: TcpStream, log: &Mutex<Vec<String>>, signed_in: &Mutex<bool>, r
         if reader.read_line(&mut line).unwrap_or(0) == 0 {
             return;
         }
+        let _answering = Answering::new(answering);
         let mut parts = line.split_whitespace();
         let (method, target) = (
             parts.next().unwrap_or("").to_owned(),
@@ -130,6 +244,10 @@ fn serve(stream: TcpStream, log: &Mutex<Vec<String>>, signed_in: &Mutex<bool>, r
         log.lock().push(format!("{method} {path}"));
         let reply =
             route(&method, &path, &body).unwrap_or_else(|| default(&method, &path, signed_in));
+        // The route ran (a test may read what it kept); only the answer is late.
+        if let Some(delay) = answer_delay() {
+            std::thread::sleep(delay);
+        }
         let text = reply.body.to_string();
         let mut head = format!(
             "HTTP/1.1 {} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\n",
@@ -264,9 +382,8 @@ pub fn workspace(method: &str, path: &str) -> Option<Reply> {
 
 /// The label of the node that has focus, if any.
 pub fn focused_label(harness: &Harness<'_, Launcher>) -> Option<String> {
-    use egui_kittest::kittest::NodeT;
     harness
-        .query_all(egui_kittest::kittest::By::new().predicate(|n| n.is_focused()))
+        .query_all(By::new().predicate(|n| n.is_focused()))
         .next()
         .map(|n| n.accesskit_node().label().unwrap_or_default())
 }
@@ -274,39 +391,295 @@ pub fn focused_label(harness: &Harness<'_, Launcher>) -> Option<String> {
 /// The app on `api` at `route`, headless (accessibility tree only).
 pub fn launcher(api: &FakeApi, route: &str) -> Harness<'static, Launcher> {
     let client = gelabber_client::Client::new(&api.origin).expect("client");
+    launcher_with(api, client, route)
+}
+
+/// The app with `client` (on `api`) at `route`.
+pub fn launcher_with(
+    api: &FakeApi,
+    client: gelabber_client::Client,
+    route: &str,
+) -> Harness<'static, Launcher> {
+    api.watch();
     let route = route.to_owned();
     Harness::builder()
         .with_size(egui::vec2(1280.0, 800.0))
-        .with_max_steps(10_000)
+        // Building runs the app until it stops asking for frames, at most
+        // this many. A spinner never stops, and these steps do not wait:
+        // 10,000 of them took 7 to 10 s, so a request held at the stand-in
+        // ran into the client's 10 s timeout before the test saw the app
+        // (GEL-425). The waits below step it from here on.
+        .with_max_steps(4)
         .with_step_dt(1.0 / 60.0)
         .build_eframe(move |cc| Launcher::with_app(cc, client.clone(), Some(route.clone())))
 }
 
-/// Steps (in real time: requests go to another thread) until `done`.
+/// How long [`wait_for`] and the helpers on it give the app.
+const PATIENCE: Duration = Duration::from_secs(15);
+/// Frames in a row the tree must stay the same for the app to count as idle.
+const STILL_FRAMES: usize = 3;
+
+/// Steps (in real time: requests go to another thread) until `check`
+/// passes, and fails with its last word when it never does.
+fn step_until<'h>(
+    harness: &mut Harness<'h, Launcher>,
+    mut check: impl FnMut(&mut Harness<'h, Launcher>) -> Result<(), String>,
+) {
+    let start = Instant::now();
+    loop {
+        let why = match check(harness) {
+            Ok(()) => return,
+            Err(why) => why,
+        };
+        assert!(
+            start.elapsed() < PATIENCE,
+            "timed out waiting for {why}{}",
+            last_seen()
+        );
+        harness.step();
+        // Real time only for work on other threads; frames alone need none.
+        if pending(harness) {
+            std::thread::sleep(Duration::from_millis(10));
+        } else {
+            std::thread::yield_now();
+        }
+    }
+}
+
+/// Polls `done` until it holds, for work on other threads that no harness
+/// steps (a worker, a download, the client's state); fails as [`wait_for`].
+pub fn eventually(what: &str, mut done: impl FnMut() -> bool) {
+    let start = Instant::now();
+    while !done() {
+        assert!(start.elapsed() < PATIENCE, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Steps until `done`.
 pub fn wait_for(
     harness: &mut Harness<'_, Launcher>,
     what: &str,
     done: impl Fn(&Harness<'_, Launcher>) -> bool,
 ) {
-    let start = Instant::now();
-    while !done(harness) {
-        assert!(
-            start.elapsed() < Duration::from_secs(15),
-            "timed out waiting for {what}"
-        );
-        harness.step();
-        std::thread::sleep(Duration::from_millis(10));
+    wait_until(harness, what, |h| done(h));
+}
+
+/// Steps until `done`, which may reach into the app ([`Launcher::app`]).
+pub fn wait_until<'h>(
+    harness: &mut Harness<'h, Launcher>,
+    what: &str,
+    mut done: impl FnMut(&mut Harness<'h, Launcher>) -> bool,
+) {
+    step_until(harness, |h| {
+        if done(h) {
+            Ok(())
+        } else {
+            Err(what.to_owned())
+        }
+    });
+}
+
+/// Steps until the app shows `path`.
+pub fn wait_for_path(harness: &mut Harness<'_, Launcher>, path: &str) {
+    wait_until(harness, path, |h| {
+        h.state_mut()
+            .app()
+            .is_some_and(|app| app.nav().route().path() == path)
+    });
+}
+
+/// Every node with what it says and where it lies, as one number.
+fn fingerprint(harness: &Harness<'_, Launcher>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for node in harness.query_all(By::new()) {
+        let node = node.accesskit_node();
+        node.locate().0.hash(&mut hasher);
+        format!("{:?}", node.data()).hash(&mut hasher);
     }
+    hasher.finish()
+}
+
+/// Steps until the app has nothing on its way: no request at the stand-in
+/// API, none in the client, no image loading, and the accessibility tree
+/// the same for a few frames. A click aimed before then can land where a
+/// node lay before an answer moved it.
+pub fn wait_until_idle(harness: &mut Harness<'_, Launcher>) {
+    let mut last = None;
+    let mut still = 0;
+    step_until(harness, |h| {
+        let print = fingerprint(h);
+        let answering = answering();
+        let busy = pending(h);
+        // Frames count as still only once nothing is on its way: an answer
+        // that just came in changes the tree on a later frame.
+        still = if answering == 0 && !busy && last.replace(print) == Some(print) {
+            still + 1
+        } else {
+            last = Some(print);
+            0
+        };
+        if answering > 0 {
+            Err(format!(
+                "the app to settle: {answering} requests at the stand-in API"
+            ))
+        } else if busy {
+            Err("the app to settle: the client is busy or has a timer set".into())
+        } else if still < STILL_FRAMES {
+            Err("the app to settle: the tree keeps changing".into())
+        } else {
+            Ok(())
+        }
+    });
+}
+
+/// The node with accesskit id `id`.
+fn node_by_id<'a>(
+    harness: &'a Harness<'_, Launcher>,
+    id: egui::accesskit::NodeId,
+) -> Option<egui_kittest::Node<'a>> {
+    harness
+        .query_all(By::new())
+        .find(|n| n.accesskit_node().locate().0 == id)
+}
+
+/// The node and the nodes it lies in, innermost first.
+fn with_ancestors(node: &egui_kittest::Node<'_>) -> Vec<egui::accesskit::NodeId> {
+    let mut ids = vec![node.accesskit_node().locate().0];
+    let mut up = node.accesskit_node().parent();
+    while let Some(parent) = up {
+        ids.push(parent.locate().0);
+        up = parent.parent();
+    }
+    ids
+}
+
+/// Clicks the node `pick` names, once the app is idle ([`wait_until_idle`]),
+/// as [`click_now`] does.
+pub fn click_node(
+    harness: &mut Harness<'_, Launcher>,
+    what: &str,
+    pick: impl Fn(&Harness<'_, Launcher>) -> Option<egui::accesskit::NodeId>,
+) {
+    wait_until_idle(harness);
+    click_now(harness, what, pick);
+}
+
+/// Clicks the node `pick` names without waiting for the app, once it lies
+/// still: for a test whose point is a click while a request is on its way,
+/// or before the app's own retry. The pointer goes
+/// there first, and egui's own hit test must name that node, one it lies
+/// in or one in it (for a disabled node: one around it) before the button
+/// goes down; a click that would land elsewhere fails at once, with the
+/// node's rectangle.
+pub fn click_now(
+    harness: &mut Harness<'_, Launcher>,
+    what: &str,
+    pick: impl Fn(&Harness<'_, Launcher>) -> Option<egui::accesskit::NodeId>,
+) {
+    // Where it lay a frame before: an answer that just came in may still
+    // move it.
+    let mut last = None;
+    step_until(harness, |h| {
+        let Some(place) = pick(h).and_then(|id| node_by_id(h, id)).map(|n| n.rect()) else {
+            let labels: Vec<String> = h
+                .query_all(By::new())
+                .filter_map(|n| n.accesskit_node().label())
+                .collect();
+            return Err(format!("{what} to click; the labels: {labels:?}"));
+        };
+        if last.replace(place) == Some(place) {
+            Ok(())
+        } else {
+            Err(format!("{what} to lie still"))
+        }
+    });
+    let id = pick(harness).expect("the picked node");
+    let rect = node_by_id(harness, id).expect("the picked node").rect();
+    let window = harness.ctx.content_rect();
+    assert!(
+        window.contains(rect.center()),
+        "{what} at {rect:?} lies outside the window {window:?}"
+    );
+    harness.hover_at(rect.center());
+    // egui gives a press to what its hit test found for the pointer, from
+    // the frame before. Read that hit in a frame whose tree is the one of
+    // the frame before it, so it comes from the widgets the press meets.
+    // (After the press it cannot be read: a click that closes a menu runs a
+    // second pass without the press.)
+    let mut last = None;
+    step_until(harness, |h| {
+        let print = fingerprint(h);
+        if last.replace(print) == Some(print) {
+            Ok(())
+        } else {
+            Err(format!("{what} to lie still under the pointer"))
+        }
+    });
+    let node = node_by_id(harness, id)
+        .unwrap_or_else(|| panic!("{what} at {rect:?} went away under the pointer"));
+    assert_eq!(node.rect(), rect, "{what} moved under the pointer");
+    let around = with_ancestors(&node);
+    let disabled = node.accesskit_node().is_disabled();
+    // Whether the node takes a click itself.
+    let clickable = harness.ctx.viewport(|v| {
+        v.prev_pass.widgets.layers().any(|(_, widgets)| {
+            widgets
+                .iter()
+                .any(|w| w.id.accesskit_id() == id && w.sense.senses_click())
+        })
+    });
+    let hit = harness
+        .ctx
+        .viewport(|v| v.hits.click.map(|w| w.id.accesskit_id()));
+    let hit_node = hit.and_then(|hit| node_by_id(harness, hit));
+    // The node or one in it; one it lies in only when the node takes no
+    // click itself (a label in a row); for a disabled node, which takes
+    // none, what lies around it (a dialog's backdrop), not a neighbour.
+    let lands = hit == Some(id)
+        || hit_node.is_some_and(|n| with_ancestors(&n)[1..].contains(&id))
+        || (!clickable && hit.is_some_and(|hit| around.contains(&hit)))
+        || (disabled && hit_node.is_some_and(|n| n.rect().contains_rect(rect)));
+    if !lands {
+        let other = hit_node.map(|n| format!("{:?} at {:?}", n.accesskit_node().label(), n.rect()));
+        panic!(
+            "a click on {what} at {rect:?} would land on {}",
+            other.unwrap_or_else(|| format!("{hit:?}"))
+        );
+    }
+    node.click();
+    harness.step();
+}
+
+/// The accesskit id of `node`, for a [`click_node`] pick.
+pub fn id_of(node: egui_kittest::Node<'_>) -> egui::accesskit::NodeId {
+    node.accesskit_node().locate().0
+}
+
+/// Clicks the one node labelled `label` ([`click_node`]).
+pub fn click(harness: &mut Harness<'_, Launcher>, label: &str) {
+    click_node(harness, label, |h| {
+        let mut all = h.query_all_by_label(label);
+        let one = all.next()?;
+        assert!(all.next().is_none(), "more than one node labelled {label}");
+        Some(one.accesskit_node().locate().0)
+    });
+}
+
+/// Clicks the one node with `role` and `label` ([`click_node`]).
+pub fn click_role(harness: &mut Harness<'_, Launcher>, role: egui::accesskit::Role, label: &str) {
+    click_node(harness, label, |h| {
+        h.query_by_role_and_label(role, label)
+            .map(|n| n.accesskit_node().locate().0)
+    });
 }
 
 /// Steps until a node labelled `label` is in the tree and lies where it
-/// lay a frame before. A click goes to the place a node had when the test
-/// asked for it, and a node that only just showed may still move: the auth
-/// pages centre their column by the height of the pass before, so a frame
-/// that got an answer between its two passes is drawn once with the column
-/// off by half of what came in (GEL-78).
+/// lay a frame before: a node that only just showed may still move (the
+/// auth pages centre their column by the height of the pass before,
+/// GEL-78). A click needs more than that and waits for itself ([`click`]).
 pub fn wait_for_label(harness: &mut Harness<'_, Launcher>, label: &str) {
-    use egui_kittest::kittest::NodeT;
     let last = std::cell::Cell::new(None);
     wait_for(harness, label, |h| {
         let place = h
@@ -321,6 +694,27 @@ pub fn wait_for_text(harness: &mut Harness<'_, Launcher>, text: &str) {
     wait_for(harness, text, |h| h.query_by_label_contains(text).is_some());
 }
 
+/// [`click_role`] without waiting for the app ([`click_now`]).
+pub fn click_role_now(
+    harness: &mut Harness<'_, Launcher>,
+    role: egui::accesskit::Role,
+    label: &str,
+) {
+    click_now(harness, label, |h| {
+        h.query_by_role_and_label(role, label).map(id_of)
+    });
+}
+
+/// Clicks the last node with `role` and `label`: a dialog's button over
+/// the page's of the same name ([`click_node`]).
+pub fn click_last(harness: &mut Harness<'_, Launcher>, role: egui::accesskit::Role, label: &str) {
+    click_node(harness, label, |h| {
+        h.query_all_by_label(label)
+            .rfind(|n| n.accesskit_node().role() == role)
+            .map(id_of)
+    });
+}
+
 /// The user panel's avatar button, which opens the account popover: the
 /// lowest button named after `name` (an unread feedback reply adds to its
 /// name).
@@ -328,7 +722,6 @@ pub fn account_button<'a>(
     harness: &'a Harness<'_, Launcher>,
     name: &str,
 ) -> Option<egui_kittest::Node<'a>> {
-    use egui_kittest::kittest::NodeT;
     harness
         .query_all_by_role(egui::accesskit::Role::Button)
         .filter(|n| {
@@ -344,6 +737,8 @@ pub fn open_account(harness: &mut Harness<'_, Launcher>, name: &str) {
     wait_for(harness, "the user panel", |h| {
         account_button(h, name).is_some()
     });
-    account_button(harness, name).expect("the avatar").click();
+    click_node(harness, "the avatar", |h| {
+        account_button(h, name).map(|n| n.accesskit_node().locate().0)
+    });
     wait_for_label(harness, "Abmelden");
 }

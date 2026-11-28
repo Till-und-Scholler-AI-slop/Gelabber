@@ -451,7 +451,7 @@ async fn in_flight_send_rechecks_membership_after_the_writer_lock(pool: PgPool) 
 
     let mut ban = hold_server_row(&pool, server_id).await;
     let path = format!("/api/channels/{channel_id}/messages");
-    let mut send = tokio::spawn(async move {
+    let send = tokio::spawn(async move {
         member
             .send(
                 Method::POST,
@@ -461,11 +461,8 @@ async fn in_flight_send_rechecks_membership_after_the_writer_lock(pool: PgPool) 
             .await
     });
     // A send that read its access before the ban must not slip past it.
-    assert!(
-        tokio::time::timeout(Duration::from_millis(50), &mut send)
-            .await
-            .is_err()
-    );
+    common::lock_waiters(&pool, 1).await;
+    assert!(!send.is_finished(), "the send waits for the server's row");
     sqlx::query("DELETE FROM server_members WHERE server_id=$1 AND user_id=$2")
         .bind(server_id)
         .bind(member_id)
@@ -505,11 +502,11 @@ async fn in_flight_moderator_delete_rechecks_manage_messages(pool: PgPool) {
 
     let mut revoke = hold_server_row(&pool, server_id).await;
     let path = format!("/api/messages/{message}");
-    let mut delete = tokio::spawn(async move { member.send(Method::DELETE, &path, None).await });
+    let delete = tokio::spawn(async move { member.send(Method::DELETE, &path, None).await });
+    common::lock_waiters(&pool, 1).await;
     assert!(
-        tokio::time::timeout(Duration::from_millis(50), &mut delete)
-            .await
-            .is_err()
+        !delete.is_finished(),
+        "the delete waits for the server's row"
     );
     sqlx::query("UPDATE servers SET member_permissions=0 WHERE id=$1")
         .bind(server_id)
@@ -549,13 +546,9 @@ async fn preview_removal_publishes_an_edit_that_landed_before_its_lock(pool: PgP
     .await
     .unwrap();
 
-    // The same key as `delivery::lock_channel`.
-    let mut blocker = pool.acquire().await.unwrap();
-    sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 507))")
-        .bind(channel.to_string())
-        .execute(&mut *blocker)
-        .await
-        .unwrap();
+    // The channel's write lock, held as a writer holds it.
+    let mut blocker = pool.begin().await.unwrap();
+    delivery::lock_channel(&mut blocker, channel).await.unwrap();
     let path = format!("/api/messages/{message}/previews");
     let removal = tokio::spawn(async move { owner.send(Method::DELETE, &path, None).await });
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -575,7 +568,9 @@ async fn preview_removal_publishes_an_edit_that_landed_before_its_lock(pool: PgP
     })
     .await
     .expect("the removal waits on the channel lock");
-    // The author's edit from another device commits first.
+    // The author's edit from another device, made under the lock the
+    // removal waits for: it commits with the lock's release, before the
+    // removal runs.
     sqlx::query(
         "UPDATE messages SET content='https://example.org/ neu', edited_at=now() WHERE id=$1",
     )
@@ -583,12 +578,7 @@ async fn preview_removal_publishes_an_edit_that_landed_before_its_lock(pool: PgP
     .execute(&mut *blocker)
     .await
     .unwrap();
-    sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1, 507))")
-        .bind(channel.to_string())
-        .execute(&mut *blocker)
-        .await
-        .unwrap();
-    drop(blocker);
+    blocker.commit().await.unwrap();
     let removal = removal.await.unwrap();
     assert_eq!(removal.status, StatusCode::NO_CONTENT, "{}", removal.body);
 
@@ -856,13 +846,9 @@ async fn concurrent_deletes_publish_one_delete_event(pool: PgPool) {
     let posted = post_message(&mut member, &channel_id, "einmal weg").await;
     let message: Uuid = posted["id"].as_str().unwrap().parse().unwrap();
 
-    // The same key as `delivery::lock_channel`.
-    let mut blocker = pool.acquire().await.unwrap();
-    sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 507))")
-        .bind(channel.to_string())
-        .execute(&mut *blocker)
-        .await
-        .unwrap();
+    // The channel's write lock, held as a writer holds it.
+    let mut blocker = pool.begin().await.unwrap();
+    delivery::lock_channel(&mut blocker, channel).await.unwrap();
     let path = format!("/api/messages/{message}");
     let by_author = tokio::spawn({
         let path = path.clone();
@@ -887,12 +873,7 @@ async fn concurrent_deletes_publish_one_delete_event(pool: PgPool) {
     })
     .await
     .expect("both deletes wait on the channel lock");
-    sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1, 507))")
-        .bind(channel.to_string())
-        .execute(&mut *blocker)
-        .await
-        .unwrap();
-    drop(blocker);
+    blocker.commit().await.unwrap();
     let by_author = by_author.await.unwrap();
     let by_owner = by_owner.await.unwrap();
     assert_eq!(
