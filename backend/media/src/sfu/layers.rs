@@ -20,15 +20,22 @@
 //! publisher encoded every frame.
 //!
 //! Read from the source, not measured: the same round over one sample starts
-//! when a layer's packets come back after more than the 2.5 s rate window,
-//! for example after a paused Live is resumed, since the stream's score reset
-//! (`RtpStreamRecv.cpp`) asks for it right after counting that packet.
+//! when a layer's packets come back after more than 3.75 s of silence (1.5
+//! times the 2.5 s rate window, `RateCalculator::Update` with
+//! `RecentSampleMarginFactor`; before that the old period stays and one
+//! sample gives a rate), since the stream's score reset (`RtpStreamRecv.cpp`)
+//! asks for it right after counting that packet. A producer that is resumed
+//! can be such a case, but no current client pauses a video producer: the web
+//! client pauses only its microphone, the desktop app sends no pause for video,
+//! and `produce` resumes its paused producer before the room attach. The
+//! resume path is there for that window and for a later client.
 //!
 //! So the SFU asks for rounds itself, after `consumerReady` resumes a layered
 //! consumer and after its producer resumes: every `NUDGE_EVERY` until the
 //! consumer has a layer, `NUDGE_ROUNDS` rounds at most.
 use super::*;
 use mediasoup::consumer::ConsumerType;
+use tracing::debug;
 
 pub(super) const NUDGE_EVERY: Duration = Duration::from_millis(250);
 /// Ten seconds: longer than any start seen; a Live paused meanwhile stops it.
@@ -43,21 +50,55 @@ pub(super) trait AwaitsLayer {
     fn nudge(&self) -> impl Future<Output = Result<(), SfuError>> + Send;
 }
 
+/// What ended a wait for a layer.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(super) enum WaitEnd {
+    Settled,
+    /// A nudge was refused: command slots full, its deadline, a closed consumer.
+    Refused,
+    /// Every round was asked for, without a layer.
+    Exhausted,
+}
+
 /// Asks for a round after each `tick` until the consumer is settled, at most
-/// `rounds` times, and stops at the first refused request. Returns the rounds
-/// asked for.
+/// `rounds` times, and stops at the first refused request. Returns why it
+/// ended and the rounds asked for.
 pub(super) async fn nudge_until_layer<F: Future<Output = ()>>(
     consumer: &impl AwaitsLayer,
     rounds: u32,
-    mut tick: impl FnMut() -> F,
-) -> u32 {
+    tick: &mut impl FnMut() -> F,
+) -> (WaitEnd, u32) {
     for asked in 0..rounds {
         tick().await;
-        if consumer.settled() || consumer.nudge().await.is_err() {
-            return asked;
+        if consumer.settled() {
+            return (WaitEnd::Settled, asked);
+        }
+        if consumer.nudge().await.is_err() {
+            return (WaitEnd::Refused, asked);
         }
     }
-    rounds
+    (WaitEnd::Exhausted, rounds)
+}
+
+/// Waits with `nudge_until_layer`, then `release`s the wait, which says
+/// whether to wait once more: a wait that ended because the consumer looked
+/// settled (its producer paused) waits again if it is no longer settled, since
+/// a resume between that look and the release found the wait still running and
+/// started none.
+pub(super) async fn wait_for_layer<F: Future<Output = ()>>(
+    consumer: &impl AwaitsLayer,
+    rounds: u32,
+    mut tick: impl FnMut() -> F,
+    release: impl Fn(WaitEnd) -> bool,
+) -> (WaitEnd, u32) {
+    let mut asked = 0;
+    loop {
+        let (end, more) = nudge_until_layer(consumer, rounds, &mut tick).await;
+        asked += more;
+        if !release(end) {
+            return (end, asked);
+        }
+    }
 }
 
 impl NativeConsumer {
@@ -134,18 +175,38 @@ impl Sfu {
         let channel = sub.publication.peer.authority.claim.c;
         let consumer = sub.consumer.id();
         tokio::spawn(async move {
-            let rounds =
-                nudge_until_layer(&waiting, NUDGE_ROUNDS, || tokio::time::sleep(every)).await;
-            if rounds == NUDGE_ROUNDS && !waiting.settled() {
-                warn!(
+            let (end, rounds) = wait_for_layer(
+                &waiting,
+                NUDGE_ROUNDS,
+                || tokio::time::sleep(every),
+                |end| match waiting.sub.upgrade() {
+                    Some(s) => {
+                        s.awaiting_layer.store(false, Ordering::SeqCst);
+                        end == WaitEnd::Settled
+                            && !s.consumer.settled()
+                            && !s.awaiting_layer.swap(true, Ordering::SeqCst)
+                    }
+                    None => false,
+                },
+            )
+            .await;
+            let unsettled = waiting.sub.upgrade().is_some() && !waiting.settled();
+            match end {
+                WaitEnd::Exhausted if unsettled => warn!(
                     %channel,
                     %consumer,
                     rounds,
                     "consumer has no layer after the SFU asked for bitrate rounds"
-                );
+                ),
+                WaitEnd::Refused if unsettled => debug!(
+                    %channel,
+                    %consumer,
+                    rounds,
+                    "consumer's wait for a layer ended on a refused request"
+                ),
+                _ => {}
             }
             if let Some(s) = waiting.sub.upgrade() {
-                s.awaiting_layer.store(false, Ordering::SeqCst);
                 s.layer_wait_ended.notify_one();
             }
         });
@@ -188,8 +249,8 @@ mod tests {
     async fn a_consumer_without_a_layer_is_nudged_until_it_has_one() {
         let consumer = fake(3, false);
         assert_eq!(
-            nudge_until_layer(&consumer, NUDGE_ROUNDS, || async {}).await,
-            3
+            nudge_until_layer(&consumer, NUDGE_ROUNDS, &mut || async {}).await,
+            (WaitEnd::Settled, 3)
         );
         assert_eq!(consumer.nudges.load(Ordering::SeqCst), 3);
     }
@@ -198,8 +259,8 @@ mod tests {
     async fn a_consumer_that_has_its_layer_is_left_alone() {
         let consumer = fake(0, false);
         assert_eq!(
-            nudge_until_layer(&consumer, NUDGE_ROUNDS, || async {}).await,
-            0
+            nudge_until_layer(&consumer, NUDGE_ROUNDS, &mut || async {}).await,
+            (WaitEnd::Settled, 0)
         );
         assert_eq!(consumer.nudges.load(Ordering::SeqCst), 0);
     }
@@ -207,9 +268,51 @@ mod tests {
     #[tokio::test]
     async fn nudging_ends_after_its_rounds_or_at_a_refused_request() {
         let never = fake(u32::MAX, false);
-        assert_eq!(nudge_until_layer(&never, 5, || async {}).await, 5);
+        assert_eq!(
+            nudge_until_layer(&never, 5, &mut || async {}).await,
+            (WaitEnd::Exhausted, 5)
+        );
         assert_eq!(never.nudges.load(Ordering::SeqCst), 5);
         let closed = fake(u32::MAX, true);
-        assert_eq!(nudge_until_layer(&closed, 5, || async {}).await, 0);
+        assert_eq!(
+            nudge_until_layer(&closed, 5, &mut || async {}).await,
+            (WaitEnd::Refused, 0)
+        );
+    }
+
+    /// `settled()` answers from a script, then true.
+    struct Scripted {
+        answers: StdMutex<VecDeque<bool>>,
+        nudges: AtomicU32,
+    }
+    impl AwaitsLayer for Scripted {
+        fn settled(&self) -> bool {
+            self.answers.lock().unwrap().pop_front().unwrap_or(true)
+        }
+        async fn nudge(&self) -> Result<(), SfuError> {
+            self.nudges.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_producer_resumed_as_the_wait_ends_starts_it_again() {
+        // Settled at the first look (its producer paused), unsettled at the
+        // release (resumed meanwhile), then one round until its layer.
+        let consumer = Scripted {
+            answers: StdMutex::new([true, false, false, true].into()),
+            nudges: AtomicU32::new(0),
+        };
+        let flag = AtomicBool::new(true);
+        let release = |end| {
+            flag.store(false, Ordering::SeqCst);
+            end == WaitEnd::Settled && !consumer.settled() && !flag.swap(true, Ordering::SeqCst)
+        };
+        assert_eq!(
+            wait_for_layer(&consumer, NUDGE_ROUNDS, || async {}, release).await,
+            (WaitEnd::Settled, 1)
+        );
+        assert_eq!(consumer.nudges.load(Ordering::SeqCst), 1);
+        assert!(!flag.load(Ordering::SeqCst));
     }
 }

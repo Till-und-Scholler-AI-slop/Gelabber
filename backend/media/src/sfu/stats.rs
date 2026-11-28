@@ -115,8 +115,9 @@ impl Sfu {
                     if let (Some(sfu), Some(s)) = (weak.upgrade(), subweak.upgrade())
                         && s.grant.valid()
                     {
-                        // A resumed Live's layers may start over (layers.rs).
-                        if !paused {
+                        // A resumed Live's layers may start over (layers.rs);
+                        // the same rule as consumerReady.
+                        if !paused && s.valid() {
                             sfu.await_layer(&engine, &s);
                         }
                         sfu.emit(
