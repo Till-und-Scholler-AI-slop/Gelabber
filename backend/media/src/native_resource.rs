@@ -255,6 +255,9 @@ impl NativeConsumer {
     pub async fn resume(&self) -> Result<(), SfuError> {
         self.resource.run(|c| async move { c.resume().await }).await
     }
+    pub fn priority(&self) -> Option<u8> {
+        self.resource.with(Consumer::priority)
+    }
     /// Its weight in its transport's bitrate rounds; a change asks for one.
     pub async fn set_priority(&self, priority: u8) -> Result<(), SfuError> {
         self.resource
