@@ -26,6 +26,7 @@ on:
       - '.github/workflows/scripts/apt-install.sh'
       - '.github/workflows/scripts/start-minio.sh'
       - '.github/workflows/scripts/playwright-browsers.sh'
+      - '.github/workflows/scripts/previous_release.sh'
       - 'deploy/compose/compose.yaml'
       - 'rust-toolchain.toml'
   pull_request:

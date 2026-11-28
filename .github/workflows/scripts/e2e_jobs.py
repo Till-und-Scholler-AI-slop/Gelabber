@@ -37,7 +37,9 @@ JOBS = {
     # The desktop app against the API and the SFU, on the parity stack: its
     # seed is a web script, the call's people use the web client, and every
     # request goes through Vite's proxy.
-    'desktop': ('desktop/', 'backend/', 'web/') + WORKFLOW,
+    'desktop': ('desktop/', 'backend/', 'web/',
+                # It names the previous minor's release the app runs against.
+                '.github/workflows/scripts/previous_release.sh') + WORKFLOW,
 }
 
 
