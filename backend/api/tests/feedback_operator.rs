@@ -833,17 +833,10 @@ fn moved(client: &Client, state: &AppState) -> Client {
     moved
 }
 
-/// Mails go out in the background; wait until `count` have been taken,
-/// then a little longer so that one too many would show.
+/// Mails go out in the background: once every mail task has ended,
+/// exactly `count` went out.
 async fn mails(mailer: &Mailer, count: usize) -> Vec<Sent> {
-    for _ in 0..200 {
-        if mailer.outbox().len() >= count {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let sent = mailer.outbox();
+    let sent = common::settled_mails(mailer).await;
     assert_eq!(sent.len(), count, "{sent:?}");
     sent
 }

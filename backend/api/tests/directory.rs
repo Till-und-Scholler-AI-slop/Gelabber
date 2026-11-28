@@ -1438,11 +1438,8 @@ where
     browser.jar = client.jar.clone();
     browser.csrf = client.csrf.clone();
     let pending = tokio::spawn(call(browser));
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(
-        !pending.is_finished(),
-        "the call waits for the account's row"
-    );
+    // The call waits for the account's row.
+    common::lock_waiters(pool, 1).await;
     sqlx::query("UPDATE users SET deleted_at = now() WHERE id = $1")
         .bind(user)
         .execute(&mut *deleting)

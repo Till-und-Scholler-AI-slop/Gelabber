@@ -5,7 +5,6 @@ mod common;
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::http::header::{ACCEPT_LANGUAGE, CONTENT_TYPE, LOCATION};
@@ -135,17 +134,10 @@ async fn rows(pool: &PgPool) -> i64 {
         .unwrap()
 }
 
-/// Mails go out in the background; wait until `count` have been taken,
-/// then a little longer so that one too many would show.
+/// Mails go out in the background: once every mail task has ended,
+/// exactly `count` went out.
 async fn mails(mailer: &Mailer, count: usize) -> Vec<Sent> {
-    for _ in 0..200 {
-        if mailer.outbox().len() >= count {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let sent = mailer.outbox();
+    let sent = common::settled_mails(mailer).await;
     assert_eq!(sent.len(), count, "{sent:?}");
     sent
 }
@@ -305,9 +297,8 @@ async fn the_honeypot_stores_and_sends_nothing(pool: PgPool) {
         ("website", "https://spam.example"),
     ]);
     see_other(post(&state, body).await, "/de/feedback/gesendet").await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(rows(&pool).await, 0);
-    assert!(mailer.outbox().is_empty());
+    assert!(common::settled_mails(&mailer).await.is_empty());
 }
 
 #[sqlx::test]
@@ -634,8 +625,7 @@ async fn too_many_pending_entries_refuse_the_form(pool: PgPool) {
         rows(&pool).await,
         gelabber_api::limits::FEEDBACK_PENDING_MAX
     );
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(mailer.outbox().is_empty());
+    assert!(common::settled_mails(&mailer).await.is_empty());
 
     // The refused post gave its mail back: five more fit once there is room.
     sqlx::query("DELETE FROM feedback")
@@ -737,8 +727,7 @@ async fn the_daily_ceiling_refuses_until_the_oldest_post_is_a_day_old(pool: PgPo
     )
     .await;
     assert_eq!(rows(&pool).await, day);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(mailer.outbox().is_empty());
+    assert!(common::settled_mails(&mailer).await.is_empty());
 
     // Five hours later the older half is more than a day old.
     sqlx::query(
@@ -768,8 +757,7 @@ async fn confirmed_entries_count_against_the_hour(pool: PgPool) {
     )
     .await;
     assert_eq!(rows(&pool).await, hour);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(mailer.outbox().is_empty());
+    assert!(common::settled_mails(&mailer).await.is_empty());
 }
 
 #[sqlx::test]

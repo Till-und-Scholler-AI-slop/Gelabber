@@ -722,7 +722,24 @@ mod tests {
             let state = state.clone();
             async move { publish_joined(&state, server_id, lena).await }
         });
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // The join's event waits for the leave holding the server.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let waiting: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM pg_stat_activity \
+                     WHERE datname = current_database() AND wait_event_type = 'Lock'",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                if waiting > 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the join waits for the server's row");
         assert_eq!(member_events(&state, server_id, lena).await, ["l"]);
         assert!(
             !joined.is_finished(),
