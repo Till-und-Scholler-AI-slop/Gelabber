@@ -87,6 +87,7 @@ pub async fn mint(redis: &redis::Client, code: &str, claim: TicketClaim) -> Test
             tokio::select! {
                 biased;
                 _ = ended.changed() => break,
+                // The API's renewal, every 500 ms within the 3 s lease.
                 _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
                     if let Ok(mut conn) = writer.get_multiplexed_async_connection().await {
                         let _: Result<(), _> = redis::cmd("SET").arg(&lease_key).arg(&user).arg("PX").arg(3000).query_async(&mut conn).await;

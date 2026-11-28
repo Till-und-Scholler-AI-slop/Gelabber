@@ -383,6 +383,8 @@ impl Gifs {
             debug!("gif share trigger dropped: klipy quota pause");
             return;
         }
+        // Taken here, before the spawn: a test reads all permits free right
+        // after this call as "no call started".
         let Ok(permit) = self.inner.shares.clone().try_acquire_owned() else {
             debug!("gif share trigger dropped: too many in flight");
             return;
@@ -894,15 +896,24 @@ mod tests {
             Arc::new(HttpMetrics::new()),
         )
         .unwrap();
-        let connected = || tokio::time::timeout(Duration::from_millis(300), listener.accept());
-
         gifs.quota_exhausted(None);
         gifs.shared("hello-hi-662", "hallo", Uuid::from_u128(7));
-        assert!(connected().await.is_err(), "no call during the pause");
+        // A call takes a share permit before it starts and holds it until
+        // it ends: all of them free means none was started.
+        assert_eq!(
+            gifs.inner.shares.available_permits(),
+            SHARES_MAX,
+            "no call during the pause"
+        );
 
         *gifs.inner.quota_until.lock().unwrap() = Some(Instant::now());
         gifs.shared("hello-hi-662", "hallo", Uuid::from_u128(7));
-        assert!(connected().await.is_ok(), "the trigger runs again after it");
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), listener.accept())
+                .await
+                .is_ok(),
+            "the trigger runs again after it"
+        );
     }
 
     #[test]
