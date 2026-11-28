@@ -24,6 +24,7 @@ on:
       - '.github/workflows/scripts/e2e_jobs.py'
       - '.github/workflows/scripts/changes.py'
       - '.github/workflows/scripts/apt-install.sh'
+      - '.github/workflows/scripts/previous_release.sh'
       - 'deploy/compose/compose.yaml'
       - 'rust-toolchain.toml'
   pull_request:

@@ -35,6 +35,7 @@ class Plan(unittest.TestCase):
                 ('.github/workflows/e2e-extended.yml', both),
                 ('.github/workflows/scripts/e2e_jobs.py', both),
                 ('.github/workflows/scripts/apt-install.sh', both),
+                ('.github/workflows/scripts/previous_release.sh', desktop),
                 ('deploy/compose/compose.yaml', both),
                 ('docs/README.md', set()),
                 ('deploy/backup.sh', set()),
