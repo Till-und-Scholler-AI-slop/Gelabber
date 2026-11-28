@@ -8,10 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { takeStamp } from "../auth/scope.ts";
 import { login, resetSessionForTests } from "../auth/session.ts";
 import { clearToasts, useToasts } from "../components/toasts.ts";
+import { getServer } from "./api.ts";
 import {
   applyMemberJoined,
   banMemberOptions,
+  createCategoryOptions,
   createChannelOptions,
+  createRoleOptions,
   createServerOptions,
   deleteCategoryOptions,
   deleteChannelOptions,
@@ -29,6 +32,7 @@ import type {
   Member,
   Server,
   ServerDetail,
+  ServerRole,
 } from "./types.ts";
 
 const created_at = "2026-11-01T00:00:00Z";
@@ -530,3 +534,101 @@ describe("a create whose answer is rejected", () => {
     ]);
   });
 });
+
+describe.each([
+  {
+    kind: "channel",
+    field: "channels",
+    options: createChannelOptions,
+    input: { name: "neu", kind: "text", category_id: null },
+    created: channel("neu"),
+  },
+  {
+    kind: "category",
+    field: "categories",
+    options: createCategoryOptions,
+    input: "Neu",
+    created: category("neu", "Neu"),
+  },
+  {
+    kind: "role",
+    field: "roles",
+    options: createRoleOptions,
+    input: { name: "Neu", color: "blue" },
+    created: {
+      id: "neu",
+      server_id: "s1",
+      name: "Neu",
+      color: "blue",
+      permissions: [],
+      position: 0,
+      created_at,
+    } satisfies ServerRole,
+  },
+] as const)(
+  "a $kind created while the server is read again",
+  ({ field, options, input, created }) => {
+    // GEL-443: a channel only reaches its creator's sidebar through this
+    // create; no live event brings it. A read of the server that left before
+    // the create was saved answers without it.
+    const rows = () => ids(cachedDetail()[field]);
+    const read = () =>
+      client
+        .fetchQuery({
+          queryKey: keys().detail,
+          queryFn: ({ signal }) => getServer("s1", signal),
+        })
+        .catch(() => null);
+    let create: ReturnType<typeof held>;
+    let reads: ReturnType<typeof held>[];
+    beforeEach(() => {
+      create = held();
+      reads = [held(), held()];
+      respond = (_url, init) =>
+        init.method === "POST" ? create.promise : reads.shift()!.promise;
+    });
+    const start = () =>
+      new MutationObserver(
+        client,
+        // One observer type for the three: each takes its own input.
+        options(client, "s1") as never,
+      ).mutate(input as never);
+
+    it("keeps it when a read answers without it before the create does", async () => {
+      const before = rows();
+      const done = start();
+      await vi.waitFor(() => expect(rows()).toHaveLength(before.length + 1));
+      const first = reads[0]!;
+      const reading = read();
+      first.resolve(json(detail));
+      await reading;
+      expect(rows()).toEqual(before);
+
+      create.resolve(json(created, 201));
+      await done;
+      expect(rows()).toEqual([...before, "neu"]);
+    });
+
+    it("keeps it when a read that left before it answers after it", async () => {
+      const before = rows();
+      const done = start();
+      await vi.waitFor(() => expect(rows()).toHaveLength(before.length + 1));
+      const [stale, fresh] = reads as [
+        ReturnType<typeof held>,
+        ReturnType<typeof held>,
+      ];
+      const reading = read();
+      create.resolve(json(created, 201));
+      await done;
+      expect(rows()).toEqual([...before, "neu"]);
+
+      stale.resolve(json(detail));
+      fresh.resolve(json({ ...detail, [field]: [...detail[field], created] }));
+      await reading;
+      await vi.waitFor(() =>
+        expect(client.isFetching({ queryKey: keys().detail })).toBe(0),
+      );
+      expect(rows()).toEqual([...before, "neu"]);
+    });
+  },
+);
