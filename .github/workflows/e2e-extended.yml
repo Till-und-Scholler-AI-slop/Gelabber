@@ -11,7 +11,10 @@ on:
   workflow_dispatch:
     inputs:
       version_line:
-        description: The version line a run by hand stands for (vX.Y; empty takes the branch's)
+        description: >-
+          The version line a run by hand stands for (vX.Y). Empty: a version branch
+          is its own line, any other branch the development line (the newest vX.Y
+          branch, scripts/previous_release.sh); name it for a branch off an older line
         required: false
         default: ''
   push:
@@ -457,9 +460,14 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      # Its Vite, seed and call.mjs, with the Chromium of its Playwright.
       - name: The previous minor's web client
         if: matrix.server == 'previous minor'
-        run: npm ci --prefix "$RUNNER_TEMP/previous/web"
+        working-directory: ${{ runner.temp }}/previous/web
+        run: |
+          set -euo pipefail
+          npm ci
+          npx playwright install chromium
 
       - name: Vite and Chromium for the call's people
         run: |

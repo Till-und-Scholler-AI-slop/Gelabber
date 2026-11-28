@@ -151,6 +151,16 @@ class PreviousMinor(unittest.TestCase):
         self.assertIn('.github/workflows/scripts/previous_release.sh --fetch', step['run'])
         self.assertNotIn('git tag', step['run'])
 
+    def test_the_stack_starts_the_release_that_step_names(self):
+        # Without the tag, live-stack.sh starts this tree's servers: both legs
+        # would test the same thing, and stay green.
+        steps = workflow_data.load('e2e-extended.yml')['jobs']['desktop-live']['steps']
+        previous = next(s for s in steps if s.get('id') == 'previous')
+        self.assertIn('echo "tag=$tag" >> "$GITHUB_OUTPUT"', previous['run'])
+        stack = next(s for s in steps if 'desktop/live-stack.sh' in s.get('run', ''))
+        self.assertEqual(stack['env']['PREVIOUS'], '${{ steps.previous.outputs.tag }}')
+        self.assertIn('"$PREVIOUS" "$RUNNER_TEMP/previous/web"', stack['run'])
+
 
 class Libwebrtc(unittest.TestCase):
     def test_desktop_live_looks_for_the_package_desktop_native_builds(self):
