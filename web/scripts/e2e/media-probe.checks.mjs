@@ -1,4 +1,4 @@
-/* global URL, setTimeout, clearTimeout */
+/* global URL, setTimeout, clearTimeout, setImmediate */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createContext, runInContext } from "node:vm";
@@ -7,6 +7,8 @@ import {
   sample,
   sampleVideoConsumers,
   samplePublicationFlow,
+  sendTimeline,
+  startSendTimeline,
 } from "./probe.mjs";
 import { armPlaybackRetry, measuredVideo, watchSource } from "./media.mjs";
 import { CheckFailure } from "./harness.mjs";
@@ -708,6 +710,11 @@ test("received streams say which source they are, and consumers when they came a
         },
       ],
     ]),
+    layerHistory: [
+      { consumerId: "PRIVATE-consumer", spatial: 1, temporal: 0, at: 1_300 },
+      { consumerId: "PRIVATE-other", spatial: 0, temporal: 0, at: 1_350 },
+      { consumerId: "PRIVATE-consumer", spatial: 0, temporal: 2, at: 1_400 },
+    ],
     outgoingSources: new Map(),
     mediaElements: new Set(),
     heldTracks: [],
@@ -735,5 +742,118 @@ test("received streams say which source they are, and consumers when they came a
     temporal: 2,
     at: 1_400,
   });
+  assert.deepEqual(JSON.parse(JSON.stringify(flow.consumers[0].layerHistory)), [
+    { spatial: 1, temporal: 0, at: 1_300 },
+    { spatial: 0, temporal: 2, at: 1_400 },
+  ]);
   assert.ok(!JSON.stringify([snapshot, flow]).includes("PRIVATE"));
+});
+test("every layer report the server sends is kept, without its consumer's ID", () => {
+  const { window, hooks } = consumerProbeFixture();
+  const report = (consumerId, spatialLayer, temporalLayer) =>
+    hooks.get("gelabber:media-layers")({
+      detail: { consumerId, spatialLayer, temporalLayer },
+    });
+  report("PRIVATE-live", 1, 0);
+  report("PRIVATE-other", 0, 2);
+  report("PRIVATE-live", 1, 2);
+  const history = JSON.parse(JSON.stringify(window.__e2e.layerHistory));
+  assert.deepEqual(
+    history.map(({ consumerId, spatial, temporal }) => [
+      consumerId,
+      spatial,
+      temporal,
+    ]),
+    [
+      ["PRIVATE-live", 1, 0],
+      ["PRIVATE-other", 0, 2],
+      ["PRIVATE-live", 1, 2],
+    ],
+  );
+  assert.ok(history.every((entry) => typeof entry.at === "number"));
+  for (let i = 0; i < 100; i++) report("PRIVATE-live", 0, 0);
+  assert.equal(window.__e2e.layerHistory.length, 64);
+});
+test("the publisher's timeline holds each layer's frames, key frames and requests, and the estimate", async () => {
+  const sender = {
+    getParameters: () => ({ encodings: [{ active: true }, { active: false }] }),
+    getStats: async () =>
+      new Map([
+        [
+          "a",
+          {
+            type: "outbound-rtp",
+            rid: "r0",
+            encodingIndex: 0,
+            framesEncoded: 8,
+            keyFramesEncoded: 1,
+            pliCount: 2,
+            firCount: 0,
+            frameWidth: 160,
+            qualityLimitationReason: "none",
+          },
+        ],
+        [
+          "b",
+          {
+            type: "outbound-rtp",
+            rid: "r1",
+            encodingIndex: 1,
+            framesEncoded: 0,
+            keyFramesEncoded: 0,
+            pliCount: 0,
+            firCount: 0,
+            qualityLimitationReason: "bandwidth",
+          },
+        ],
+        [
+          "c",
+          {
+            type: "candidate-pair",
+            nominated: true,
+            availableOutgoingBitrate: 1_163_076,
+          },
+        ],
+      ]),
+  };
+  const context = createContext({
+    window: { __e2e: { outgoingSources: new Map([["s", { sender }]]) } },
+    setTimeout,
+    clearTimeout,
+  });
+  // One sample: the timeline ends with its first tick.
+  runInContext(
+    `(${startSendTimeline.toString()})({ kind: "s", forMs: 0 })`,
+    context,
+  );
+  await new Promise((done) => setImmediate(done));
+  const samples = JSON.parse(
+    JSON.stringify(runInContext(`(${sendTimeline.toString()})()`, context)),
+  );
+  assert.equal(samples.length, 1);
+  assert.equal(samples[0].bwe, 1_163_076);
+  assert.deepEqual(samples[0].layers, [
+    {
+      rid: "r0",
+      frames: 8,
+      keyframes: 1,
+      sent: null,
+      pli: 2,
+      fir: 0,
+      width: 160,
+      limit: "none",
+      active: true,
+    },
+    {
+      rid: "r1",
+      frames: 0,
+      keyframes: 0,
+      sent: null,
+      pli: 0,
+      fir: 0,
+      width: null,
+      limit: "bandwidth",
+      active: false,
+    },
+  ]);
 });

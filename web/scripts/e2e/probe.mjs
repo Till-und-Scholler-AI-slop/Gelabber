@@ -102,6 +102,15 @@ export function instrument({ relay }) {
   window.addEventListener?.("gelabber:media-layers", ({ detail }) => {
     state.layers ??= new Map();
     state.layers.set(detail.consumerId, { ...detail, at: Date.now() });
+    // Every report, not only the last, without IDs (GEL-460).
+    state.layerHistory ??= [];
+    state.layerHistory.push({
+      consumerId: detail.consumerId,
+      spatial: detail.spatialLayer ?? null,
+      temporal: detail.temporalLayer ?? null,
+      at: Date.now(),
+    });
+    if (state.layerHistory.length > 64) state.layerHistory.shift();
   });
   window.addEventListener?.("gelabber:media-producer", ({ detail }) => {
     const pc = state.peers.find((peer) =>
@@ -418,6 +427,9 @@ export async function samplePublicationFlow({ kind }) {
         .map(async (source) => ({
           arrivedAt: source.arrivedAt ?? null,
           // The server's last word on which layer it forwards; no IDs.
+          layerHistory: (state.layerHistory ?? [])
+            .filter((report) => report.consumerId === source.consumerId)
+            .map(({ spatial, temporal, at }) => ({ spatial, temporal, at })),
           layers: (({ spatialLayer, temporalLayer, at } = {}) =>
             at === undefined
               ? null
@@ -1017,4 +1029,49 @@ export async function sample({ deadlineEpochMs } = {}) {
       liveOff: s.liveOff,
     })),
   };
+}
+// What the publisher sends of one source, per simulcast layer, every
+// `everyMs` for `forMs` (GEL-460): whether a slow first frame waited for the
+// encoder or for the server. Runs in the page; read it with sendTimeline().
+export function startSendTimeline({ kind, everyMs = 200, forMs = 6_000 }) {
+  const state = window.__e2e;
+  const samples = (state.sendTimeline = []);
+  const until = Date.now() + forMs;
+  const tick = async () => {
+    const source = state.outgoingSources?.get(kind);
+    const sample = { at: Date.now(), bwe: null, layers: [] };
+    try {
+      if (source?.sender) {
+        const active = (source.sender.getParameters?.().encodings ?? []).map(
+          (encoding) => encoding.active !== false,
+        );
+        const report = await source.sender.getStats();
+        for (const row of report.values()) {
+          if (row.type === "outbound-rtp")
+            sample.layers.push({
+              rid: row.rid ?? null,
+              frames: row.framesEncoded ?? 0,
+              keyframes: row.keyFramesEncoded ?? 0,
+              sent: row.framesSent ?? null,
+              pli: row.pliCount ?? 0,
+              fir: row.firCount ?? 0,
+              width: row.frameWidth ?? null,
+              limit: row.qualityLimitationReason ?? null,
+              active: active[row.encodingIndex ?? sample.layers.length] ?? null,
+            });
+          if (row.type === "candidate-pair" && row.nominated)
+            sample.bwe = row.availableOutgoingBitrate ?? null;
+        }
+      }
+    } catch {
+      sample.error = true;
+    }
+    samples.push(sample);
+    if (Date.now() < until) state.sendTimelineTimer = setTimeout(tick, everyMs);
+  };
+  clearTimeout(state.sendTimelineTimer);
+  void tick();
+}
+export function sendTimeline() {
+  return window.__e2e.sendTimeline ?? [];
 }

@@ -10,7 +10,12 @@ import {
   until,
 } from "./harness.mjs";
 import { activePeers, armPlaybackRetry, progress } from "./media.mjs";
-import { sampleVideoSenders, samplePublicationFlow } from "./probe.mjs";
+import {
+  sampleVideoSenders,
+  samplePublicationFlow,
+  sendTimeline,
+  startSendTimeline,
+} from "./probe.mjs";
 import { publisherEncoderProgress } from "./publisher-encoders.mjs";
 const audioPackets = (s) =>
   activePeers(s)
@@ -414,6 +419,11 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "rejected-sdp-ghost-live-display",
           { controlConfirmed: true, after: afterCamera.last },
         );
+        // What the publisher sends per layer while the retry starts: evidence
+        // only, so a sampler that cannot start fails nothing (GEL-460).
+        await nativeEvaluate(f.owner, startSendTimeline, { kind: "s" }).catch(
+          () => null,
+        );
         retryClickedAt = Date.now();
         await click(f.owner, "Live gehen");
         // The retry is the second display capture, drawn green.
@@ -440,7 +450,13 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
             subscriberLive,
           ),
           ...(retry.firstFrameMs > SLOW_RETRY_MS
-            ? { publisherLive, subscriberLive }
+            ? {
+                publisherLive,
+                subscriberLive,
+                sendTimeline: await nativeEvaluate(f.owner, sendTimeline).catch(
+                  () => null,
+                ),
+              }
             : {}),
           injection:
             "one real native setRemoteDescription rejection of malformed answer",
@@ -471,13 +487,18 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
             { kind: "s" },
           ),
         };
-        if (retryClickedAt !== null)
+        if (retryClickedAt !== null) {
           diagnostics.retrySteps = retrySteps(
             retryClickedAt,
             null,
             diagnostics.publisherLive,
             diagnostics.subscriberLive,
           );
+          diagnostics.sendTimeline = await nativeEvaluate(
+            f.owner,
+            sendTimeline,
+          ).catch(() => null);
+        }
         if (error instanceof CheckFailure) {
           error.metrics = { ...error.metrics, ...diagnostics };
           throw error;
