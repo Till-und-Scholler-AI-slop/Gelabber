@@ -1,1 +1,49 @@
-[{"id":"574516c0-6b75-45cc-8b43-9822a31ada5d","name":"Wohnzimmer","owner_id":"3796349f-6f8f-4bcf-826f-d2237e2fe9d3","icon_url":null,"created_at":"2026-11-05T15:24:53.790552Z","role":"owner","permissions":["manage_server","manage_channels","manage_messages","mention_everyone","send_messages","send_files","join_voice","go_live"],"member_permissions":["send_messages","send_files","join_voice","go_live"],"blocked":false},{"id":"5a835319-c4fe-49dd-bb44-4b852aa84eb6","name":"Spieleabend","owner_id":"7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab","icon_url":null,"created_at":"2026-11-05T15:24:53.887027Z","role":"member","permissions":["send_messages","send_files","join_voice","go_live"],"member_permissions":["send_messages","send_files","join_voice","go_live"],"blocked":false}]
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000031",
+    "name": "Wohnzimmer",
+    "owner_id": "00000000-0000-4000-8000-000000000004",
+    "icon_url": null,
+    "created_at": "2030-01-01T00:00:02.000001Z",
+    "role": "owner",
+    "permissions": [
+      "manage_server",
+      "moderate_members",
+      "manage_channels",
+      "manage_messages",
+      "mention_everyone",
+      "send_messages",
+      "send_files",
+      "join_voice",
+      "go_live"
+    ],
+    "member_permissions": [
+      "send_messages",
+      "send_files",
+      "join_voice",
+      "go_live"
+    ],
+    "blocked": false
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000042",
+    "name": "Spieleabend",
+    "owner_id": "00000000-0000-4000-8000-000000000005",
+    "icon_url": null,
+    "created_at": "2030-01-01T00:00:16.000001Z",
+    "role": "member",
+    "permissions": [
+      "send_messages",
+      "send_files",
+      "join_voice",
+      "go_live"
+    ],
+    "member_permissions": [
+      "send_messages",
+      "send_files",
+      "join_voice",
+      "go_live"
+    ],
+    "blocked": false
+  }
+]

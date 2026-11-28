@@ -536,7 +536,11 @@ jobs:
             sleep 2
           done
           (cd web && node scripts/parity/seed.mjs "$GELABBER_TEST_SERVER")
-          if ! desktop/live-tests.sh; then
+          status=0
+          # The client's recorded fixtures still have the API's shapes (desktop/client/tests/models.rs).
+          node desktop/client/tests/record-fixtures.mjs "$GELABBER_TEST_SERVER" --check || status=1
+          desktop/live-tests.sh || status=1
+          if [ "$status" -ne 0 ]; then
             tail -n 100 "$logs"/*.log
             exit 1
           fi
