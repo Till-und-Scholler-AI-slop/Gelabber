@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { describe, expect, it } from "vitest";
 import { render } from "vitest-browser-react";
@@ -30,10 +30,12 @@ let growRow: (index: number, by: number) => void = nothing;
 function List() {
   const [spacer, setSpacer] = useState(0);
   const [grown, setGrown] = useState<Record<number, number>>({});
-  growRow = (index, by) =>
-    flushSync(() =>
-      setGrown((rows) => ({ ...rows, [index]: (rows[index] ?? 0) + by })),
-    );
+  useEffect(() => {
+    growRow = (index, by) =>
+      flushSync(() =>
+        setGrown((rows) => ({ ...rows, [index]: (rows[index] ?? 0) + by })),
+      );
+  }, []);
   const { scrollRef, contentRef, virtualizer, handlers } = useMessageScroll({
     active: true,
     items: messages,
