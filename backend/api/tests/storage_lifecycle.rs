@@ -789,6 +789,8 @@ async fn real_minio_proxy_upload_deadline_leaves_no_object() {
             .await,
         Err(StoreError::TimedOut)
     ));
+    // A short window on purpose: MinIO gives no event that shows it has
+    // finished with the aborted PUT, so the check gives it a second.
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert!(matches!(
         store.head("att/late").await,

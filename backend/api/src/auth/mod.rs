@@ -404,7 +404,7 @@ fn send_mail(
     outgoing: Outgoing,
 ) {
     let (state, mailer, email) = (state.clone(), mailer.clone(), email.to_owned());
-    tokio::spawn(async move {
+    mailer.clone().spawn(async move {
         let mail = match outgoing {
             Outgoing::Confirm => tokens::issue(&state.db, user_id, Purpose::VerifyEmail)
                 .await
@@ -461,7 +461,7 @@ pub fn send_mail_to(
         return;
     };
     let (state, address) = (state.clone(), address.to_owned());
-    tokio::spawn(async move {
+    mailer.clone().spawn(async move {
         let kind = mail.kind();
         match mailer.send(&address, &mail, locale).await {
             Ok(()) => info!(kind, "mail sent"),

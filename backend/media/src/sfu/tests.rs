@@ -896,15 +896,29 @@ async fn lost_worker_closes_only_its_rooms_and_is_replaced() {
 }
 
 /// Two free consecutive UDP ports on loopback, for workers on fixed ports.
+/// They lie between 30001 and 32767: above the 20000..=30000 that every
+/// worker on port 0 binds from (`Sfu::with_redis`, the other media tests,
+/// in parallel processes), and below Linux's ephemeral range that every `:0`
+/// bind draws from (`ip_local_port_range`, 32768 to 60999 by default, as on
+/// the Ubuntu runners and in the toolchain image, which shares the host's
+/// network). Between this check and the workers' bind, and while a lost
+/// worker's port waits for its replacement, only another fixed bind to the
+/// same port could take them.
 fn free_udp_pair() -> u16 {
-    for _ in 0..50 {
-        let first = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        let port = first.local_addr().unwrap().port();
-        if port < u16::MAX && std::net::UdpSocket::bind(("127.0.0.1", port + 1)).is_ok() {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos()
+        ^ std::process::id();
+    for attempt in 0..50u32 {
+        let port = 30_001 + ((seed.wrapping_add(attempt.wrapping_mul(7919))) % 2_766) as u16;
+        let first = std::net::UdpSocket::bind(("127.0.0.1", port));
+        let second = std::net::UdpSocket::bind(("127.0.0.1", port + 1));
+        if first.is_ok() && second.is_ok() {
             return port;
         }
     }
-    panic!("no free UDP port pair");
+    panic!("no free UDP port pair between the test workers' and the ephemeral range");
 }
 
 #[tokio::test]

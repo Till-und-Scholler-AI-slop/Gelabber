@@ -8,10 +8,11 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { iceAdapterOptions } from "./browser-options.mjs";
-import { safeTarget } from "./harness.mjs";
+import { failureSite, safeError, safeTarget } from "./harness.mjs";
 import { startFaultApi, useFaultRuntime } from "./fault-runtime.mjs";
 import { startFaultMedia } from "./media-runtime.mjs";
 import { attemptAll } from "./teardown.mjs";
+import { OwnedPortsBlocked } from "./owned-process.mjs";
 
 async function recordFailure(kind, record) {
   const report =
@@ -27,6 +28,25 @@ async function recordFailure(kind, record) {
   }
 }
 
+// A promise that start-up left behind and that rejects later would end Node
+// before the teardown below (GEL-457). Until the harness listens itself
+// (startHarness, GEL-453), it fails by name here and the runner goes on.
+const startupStrays = [];
+process.on("unhandledRejection", (error) => {
+  if (process.listenerCount("unhandledRejection") > 1) return;
+  process.exitCode = 1;
+  const reason = safeError(error);
+  startupStrays.push({
+    id: "stray-rejection",
+    status: "FAIL",
+    reason,
+    classification: "test-error",
+    during: "startup",
+    site: failureSite(error?.stack),
+    at: new Date().toISOString(),
+  });
+  console.error(`FAIL stray-rejection during start-up (${reason})`);
+});
 let runtime, mediaRuntime, web, cache, adapterProof;
 const digest = async (path) =>
   createHash("sha256")
@@ -116,18 +136,21 @@ try {
   process.env.GELABBER_SMOKE_URL = "http://127.0.0.1:15186";
   process.env.GELABBER_E2E_API_SHA = runtime.manifest.sourceSha;
   await import("./run.mjs");
-} catch {
+} catch (error) {
   // Startup/teardown errors can contain credentials or signed URLs: persist no raw error.
   process.exitCode = 1;
+  // A start the leftover check stopped names why (GEL-457).
+  const reason =
+    error instanceof OwnedPortsBlocked
+      ? error.message
+      : "owned-runtime-startup-or-run-error";
   await recordFailure("startup", {
     status: "BLOCKED",
-    reason: "owned-runtime-startup-or-run-error",
+    reason,
     completeAcceptance: false,
     runner: fileURLToPath(import.meta.url),
   });
-  console.error(
-    "BLOCKED owned-runtime-startup-or-run-error; redacted startup artifact written",
-  );
+  console.error(`BLOCKED ${reason}; redacted startup artifact written`);
 } finally {
   const failedSteps = await attemptAll([
     ["api-resume", () => runtime?.resumeApi?.()],
@@ -194,4 +217,10 @@ try {
       "FAIL owned-runtime-teardown-failed; redacted teardown artifact attempted",
     );
   }
+  if (startupStrays.length)
+    await recordFailure("startup-stray", {
+      status: "FAIL",
+      results: startupStrays,
+      completeAcceptance: false,
+    });
 }

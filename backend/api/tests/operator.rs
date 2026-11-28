@@ -919,8 +919,7 @@ async fn an_operator_resends_the_confirmation_mail(pool: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(mailer.outbox().len(), 1);
+    assert_eq!(common::settled_mails(&mailer).await.len(), 1);
 
     // Without mail there is nothing to send.
     let mut plain = state.clone();
@@ -949,8 +948,7 @@ async fn resending_keeps_to_the_hourly_mails(pool: PgPool) {
     assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
     assert_eq!(res.body["error"], "rate_limited");
     outbox(&mailer, 5).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(mailer.outbox().len(), 5);
+    assert_eq!(common::settled_mails(&mailer).await.len(), 5);
     let resends: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM operator_audit WHERE action = 'accounts.resend'")
             .fetch_one(&pool)
@@ -1174,8 +1172,7 @@ async fn a_disabled_account_cannot_confirm_or_reset_by_mail(pool: PgPool) {
     let res = tom.login(TOM, PASSWORD).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
     assert_eq!(res.body["error"], "account_disabled");
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(mailer.outbox().len(), 2);
+    assert_eq!(common::settled_mails(&mailer).await.len(), 2);
 
     // Registering the disabled pending address again does not take the row
     // over; the new link meets the same refusal.
@@ -1558,8 +1555,7 @@ async fn an_invitation_is_mailed_in_the_operators_language(pool: PgPool) {
     // Without send_mail nothing goes out.
     let res = invite(&mut lena, json!({ "email": "ole@example.test" })).await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(mailer.outbox().len(), 1);
+    assert_eq!(common::settled_mails(&mailer).await.len(), 1);
 }
 
 // ---- Servers: block and delist ----
