@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Installs Playwright's browsers for web/ and their system packages, the
+# packages through apt-install.sh, which reads only Ubuntu's sources;
+# --with-deps would read every source (GEL-404):
+#
+#   playwright-browsers.sh <browser>...    after npm ci in web/
+set -euo pipefail
+[ "$#" -gt 0 ] || { echo "usage: playwright-browsers.sh <browser>..." >&2; exit 2; }
+root="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$root/web"
+# The dry run lists the packages indented by two spaces, one per line.
+listing=$(npx playwright install-deps --dry-run "$@")
+mapfile -t deps < <(printf '%s\n' "$listing" | sed -n 's/^  \([^ ]\+\)$/\1/p')
+echo "System packages for $*: ${deps[*]:-none}"
+if [ "${#deps[@]}" -gt 0 ]; then
+  "$root/.github/workflows/scripts/apt-install.sh" "${deps[@]}"
+fi
+npx playwright install "$@"

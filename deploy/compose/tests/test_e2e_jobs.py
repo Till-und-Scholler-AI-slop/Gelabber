@@ -1,9 +1,12 @@
 """Which jobs of e2e-extended.yml a push starts, and the outcome its issue
 reports (.github/workflows/scripts/e2e_jobs.py, GEL-376)."""
 import importlib.util
+import os
+from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 
 import workflow_data
@@ -35,6 +38,8 @@ class Plan(unittest.TestCase):
                 ('.github/workflows/e2e-extended.yml', both),
                 ('.github/workflows/scripts/e2e_jobs.py', both),
                 ('.github/workflows/scripts/apt-install.sh', both),
+                ('.github/workflows/scripts/start-minio.sh', both),
+                ('.github/workflows/scripts/playwright-browsers.sh', both),
                 ('deploy/compose/compose.yaml', both),
                 ('docs/README.md', set()),
                 ('deploy/backup.sh', set()),
@@ -61,6 +66,47 @@ class Plan(unittest.TestCase):
         for prefix in {p for prefixes in e2e_jobs.JOBS.values() for p in prefixes}:
             with self.subTest(prefix=prefix):
                 self.assertTrue(any(prefix.startswith(p) for p in listed), prefix)
+
+
+class PushPlan(unittest.TestCase):
+    """`plan <event> <before>` in a shallow clone of the pushed branch, as the
+    runner's checkout has it, against an origin that holds `before`."""
+
+    def setUp(self):
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.env = dict(os.environ, GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@example.test',
+                        GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@example.test',
+                        GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        work, origin, self.clone = tmp / 'work', tmp / 'origin.git', tmp / 'clone'
+        self.git('init', '--quiet', '--initial-branch=v0.14', str(work))
+        self.commits = []
+        for path in ('web/src/main.tsx', 'desktop/client/src/lib.rs'):
+            (work / path).parent.mkdir(parents=True, exist_ok=True)
+            (work / path).write_text(path)
+            self.git('-C', str(work), 'add', path)
+            self.git('-C', str(work), 'commit', '--quiet', '-m', path)
+            self.commits.append(self.git('-C', str(work), 'rev-parse', 'HEAD').strip())
+        self.git('clone', '--quiet', '--bare', str(work), str(origin))
+        self.git('clone', '--quiet', '--depth=1', f'file://{origin}', str(self.clone))
+
+    def git(self, *args):
+        return subprocess.run(['git', *args], env=self.env, check=True,
+                              capture_output=True, text=True).stdout
+
+    def plan(self, event, before):
+        out = subprocess.run([sys.executable, str(SCRIPT), 'plan', event, before], cwd=self.clone,
+                             env=self.env, capture_output=True, text=True, check=True).stdout
+        return out.split()
+
+    def test_a_push_starts_the_jobs_its_commits_concern(self):
+        self.assertEqual(self.plan('push', self.commits[0]), ['faults=false', 'desktop=true'])
+
+    def test_without_a_known_starting_point_both_run(self):
+        for event, before in (('push', '0' * 40), ('push', 'f' * 40), ('push', ''),
+                              ('workflow_dispatch', self.commits[0]),
+                              ('pull_request', self.commits[0])):
+            with self.subTest(event=event, before=before):
+                self.assertEqual(self.plan(event, before), ['faults=true', 'desktop=true'])
 
 
 class Outcome(unittest.TestCase):
